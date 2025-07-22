@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
-use beam::{
+use kerosene::{
     actor::Exit,
-    global, main, receive,
+    file, global, main, receive,
     supervisor::{RestartPolicy, Strategy, Supervisor},
 };
 
@@ -18,7 +18,7 @@ async fn main_actor() -> Exit {
 
     global::spawn(stop_actor);
 
-    let contents = beam::file::read_string("Cargo.toml")
+    let contents = file::read_string("Cargo.toml")
         .await
         .ok()
         .unwrap_or(String::new());
@@ -36,7 +36,7 @@ async fn main_actor() -> Exit {
             match (): _ => {
                 println!("MainActor::handle");
 
-                let _ = beam::global::send(child, String::from("Timer!"));
+                let _ = global::send(child, String::from("Timer!"));
                 global::schedule(global::pid(), (), Duration::from_secs(1));
             }
         });

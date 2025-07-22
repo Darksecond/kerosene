@@ -1,12 +1,12 @@
 use std::time::{Duration, Instant};
 
-use beam::{
+use criterion::{Criterion, criterion_group, criterion_main};
+use kerosene::{
     actor::{Exit, Pid},
     async_actor::IntoAsyncActor,
     global::{send, sleep, spawn, stop},
     receive,
 };
-use criterion::{Criterion, criterion_group, criterion_main};
 
 static mut TIME: Duration = Duration::ZERO;
 
@@ -49,7 +49,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("receive 100000 messages", |b| {
         b.iter_custom(|iters| {
             for _ in 0..iters {
-                beam::run(main_actor);
+                kerosene::run(main_actor);
             }
             unsafe { TIME }
         });
