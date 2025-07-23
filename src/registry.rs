@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    actor::{HydratedActor, HydratedActorBase, NamedRef, Pid},
+    actor::{HydratedActor, HydratedActorBase, Pid},
     async_actor::IntoAsyncActor,
 };
 
@@ -31,17 +31,17 @@ impl Registry {
         }
     }
 
-    pub fn register(&self, named: NamedRef, actor: Pid) {
+    pub fn register(&self, named: &'static str, actor: Pid) {
         let mut names = self.names.write().expect("Failed to acquire lock");
 
         let pid = actor;
 
-        names.insert(named.name(), pid);
+        names.insert(named, pid);
     }
 
-    pub fn lookup_name(&self, name: NamedRef) -> Option<Pid> {
+    pub fn lookup_name(&self, name: &'static str) -> Option<Pid> {
         let names = self.names.read().expect("Failed to acquire lock");
-        names.get(name.name()).copied()
+        names.get(name).copied()
     }
 
     pub fn allocate_pid(&self) -> Pid {

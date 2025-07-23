@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    actor::{ActorControlBlock, HydratedActor, HydratedActorBase, NamedRef, Pid, Signal, ToPid},
+    actor::{ActorControlBlock, HydratedActor, HydratedActorBase, Pid, Signal, ToPid},
     async_actor::IntoAsyncActor,
     port::{Port, PortContext, PortRef},
     registry::Registry,
@@ -70,7 +70,7 @@ pub fn stop() {
 }
 
 /// Register a name for an actor
-pub fn register(name: NamedRef, actor: Pid) {
+pub fn register(name: &'static str, actor: Pid) {
     context().registry.register(name, actor);
 }
 

@@ -10,24 +10,9 @@ impl ToPid for Pid {
     }
 }
 
-impl ToPid for NamedRef {
+impl ToPid for &'static str {
     fn to_reference(&self, registry: &Registry) -> Pid {
         registry.lookup_name(*self).unwrap_or(Pid::invalid()).into()
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct NamedRef {
-    name: &'static str,
-}
-
-impl NamedRef {
-    pub const fn new(name: &'static str) -> Self {
-        Self { name }
-    }
-
-    pub const fn name(&self) -> &'static str {
-        self.name
     }
 }
 

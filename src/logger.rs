@@ -1,8 +1,4 @@
-use crate::{
-    actor::{Exit, NamedRef},
-    global::send,
-    receive,
-};
+use crate::{actor::Exit, global::send, receive};
 
 pub async fn logger_actor() -> Exit {
     loop {
@@ -20,13 +16,13 @@ pub enum Message {
 
 #[derive(Copy, Clone)]
 pub struct Logger {
-    inner: NamedRef,
+    inner: &'static str,
 }
 
 impl Logger {
     pub const fn global() -> Self {
         Self {
-            inner: NamedRef::new("global_logger"),
+            inner: "global_logger",
         }
     }
 

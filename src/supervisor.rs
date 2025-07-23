@@ -1,5 +1,5 @@
 use crate::{
-    actor::{Exit, NamedRef, Pid, Signal},
+    actor::{Exit, Pid, Signal},
     async_actor::{IntoAsyncActor, SimpleActor, into_actor},
     global,
 };
@@ -218,7 +218,7 @@ impl Supervisor {
         crate::global::send(self.actor, Request::Supervise(factory, policy));
     }
 
-    pub fn supervise_named<F, B>(&self, name: NamedRef, policy: RestartPolicy, factory: F)
+    pub fn supervise_named<F, B>(&self, name: &'static str, policy: RestartPolicy, factory: F)
     where
         B: IntoAsyncActor,
         F: Fn() -> B + Send + 'static,

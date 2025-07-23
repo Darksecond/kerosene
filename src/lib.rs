@@ -1,7 +1,7 @@
 use std::{num::NonZero, sync::Arc, time::Duration};
 
 use crate::{
-    actor::{ActorControlBlock, HydratedActor, NamedRef},
+    actor::{ActorControlBlock, HydratedActor},
     async_actor::IntoAsyncActor,
     logger::{Logger, logger_actor},
     monitor::Monitor,
@@ -35,11 +35,7 @@ where
         let mut actor = Some(actor);
         let supervisor = Supervisor::spawn_linked(Strategy::OneForOne);
 
-        supervisor.supervise_named(
-            NamedRef::new("global_logger"),
-            RestartPolicy::Permanent,
-            || logger_actor,
-        );
+        supervisor.supervise_named("global_logger", RestartPolicy::Permanent, || logger_actor);
 
         global::schedule(global::pid(), (), Duration::from_millis(10));
 
