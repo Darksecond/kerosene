@@ -81,6 +81,8 @@ impl Scheduler {
             self.stop(worker_id);
         }
 
+        self.registry.remove_all();
+
         self.stopped.store(true, Ordering::Release);
 
         // TODO Stop the timer.

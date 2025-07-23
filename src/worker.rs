@@ -107,7 +107,7 @@ impl Worker {
 
                     registry.remove(pid);
 
-                    for linked in links {
+                    for linked in links.iter().copied() {
                         if let Some(child) = registry.lookup_pid(linked) {
                             child.send_signal(Signal::Exit(pid, exit.clone()));
 

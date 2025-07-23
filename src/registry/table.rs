@@ -52,6 +52,17 @@ impl Table {
             .remove(&pid);
     }
 
+    pub fn clear(&self) {
+        for i in 0..NUM_SHARDS {
+            let shard = &self.shards[i as usize];
+            shard
+                .actors
+                .write()
+                .expect("Failed to acquire lock")
+                .clear();
+        }
+    }
+
     pub fn add(&self, pid: Pid, actor: Pin<Arc<dyn HydratedActorBase>>) {
         let shard = self.shard(pid);
 

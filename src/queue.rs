@@ -4,7 +4,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::cache_padded::CachePadded;
+use crate::utils::CachePadded;
 
 pub struct Queue<const S: usize, T> {
     buffer: [UnsafeCell<MaybeUninit<T>>; S],

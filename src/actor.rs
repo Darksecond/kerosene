@@ -1,21 +1,23 @@
 mod control_block;
 mod inbox;
+mod message_queue;
 mod references;
 mod waker;
 
 use std::{
     any::Any,
-    collections::VecDeque,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard, atomic::Ordering},
 };
 
 use crate::{
     actor::waker::ActorWaker, async_actor::IntoAsyncActor, port::PortTable, scheduler::Scheduler,
+    utils::UnsortedSet,
 };
 
-pub use control_block::ActorControlBlock;
+pub use control_block::{ActorControlBlock, MAX_LINKS};
 pub use inbox::Inbox;
+pub use message_queue::*;
 pub use references::*;
 
 pub trait HydratedActorBase: Send + Sync + 'static {
@@ -23,18 +25,13 @@ pub trait HydratedActorBase: Send + Sync + 'static {
 
     fn control_block(&self) -> &ActorControlBlock;
 
-    fn pop_matching(
-        &self,
-        matcher: &dyn Fn(&Box<dyn Any + Send>) -> bool,
-    ) -> Option<Box<dyn Any + Send>>;
-
     fn poll(self: Pin<&Self>) -> Option<Exit>;
-
-    fn links(&self) -> [Pid; ActorControlBlock::MAX_LINKS];
 
     fn has_messages(&self) -> bool;
 
     fn ports(&self) -> MutexGuard<PortTable>;
+    fn queue(&self) -> MutexGuard<MessageQueue>;
+    fn links(&self) -> MutexGuard<UnsortedSet<Pid, MAX_LINKS>>;
 }
 
 pub struct TrapExitMessage {
@@ -50,6 +47,17 @@ where
         self.ports.lock().expect("Failed to acquire lock")
     }
 
+    fn queue(&self) -> MutexGuard<MessageQueue> {
+        self.messages.lock().expect("Failed to acquire lock")
+    }
+
+    fn links(&self) -> MutexGuard<UnsortedSet<Pid, MAX_LINKS>> {
+        self.control_block
+            .links
+            .lock()
+            .expect("Failed to acquire lock")
+    }
+
     fn send_signal(&self, message: Signal) {
         self.inbox.push(message)
     }
@@ -62,11 +70,14 @@ where
         if let Some(signal) = self.inbox.pop() {
             match signal {
                 Signal::Exit(pid, reason) => {
+                    // Remove the link if one existed.
+                    self.links().remove(&pid);
+
                     if self.control_block.trap_exit.load(Ordering::Relaxed) {
                         self.messages
                             .lock()
                             .unwrap()
-                            .push_back(Box::new(TrapExitMessage { pid, reason }));
+                            .push(Box::new(TrapExitMessage { pid, reason }));
                     } else if reason != Exit::Normal {
                         return Some(reason);
                     }
@@ -82,7 +93,7 @@ where
                     // We don't need to do anything but run the future.
                 }
                 Signal::Message(msg) => {
-                    self.messages.lock().unwrap().push_back(msg);
+                    self.messages.lock().unwrap().push(msg);
                 }
             }
         }
@@ -108,29 +119,8 @@ where
         }
     }
 
-    fn links(&self) -> [Pid; ActorControlBlock::MAX_LINKS] {
-        self.control_block
-            .links
-            .read()
-            .expect("Failed to acquire lock")
-            .clone()
-    }
-
     fn has_messages(&self) -> bool {
         !self.inbox.is_empty()
-    }
-
-    fn pop_matching(
-        &self,
-        matcher: &dyn Fn(&Box<dyn Any + Send>) -> bool,
-    ) -> Option<Box<dyn Any + Send>> {
-        let mut queue = self.messages.lock().unwrap();
-
-        if let Some(index) = queue.iter().position(|msg| matcher(msg)) {
-            queue.remove(index)
-        } else {
-            None
-        }
     }
 }
 
@@ -195,7 +185,7 @@ where
     pub(crate) control_block: ActorControlBlock,
     pub inbox: Inbox<Signal>,
     waker: Arc<ActorWaker>,
-    messages: Mutex<VecDeque<Box<dyn Any + Send>>>, // TODO Should be a intrusive linked list or something
+    messages: Mutex<MessageQueue>,
     ports: Mutex<PortTable>,
     actor: Mutex<ActorState<A>>,
 }
@@ -217,7 +207,7 @@ where
             waker: Arc::new(ActorWaker::new(scheduler.clone(), pid)),
             actor: Mutex::new(ActorState::Waiting(actor)),
             ports: Mutex::new(PortTable::new(pid)),
-            messages: Mutex::new(VecDeque::new()),
+            messages: Mutex::new(MessageQueue::new()),
         }
     }
 }

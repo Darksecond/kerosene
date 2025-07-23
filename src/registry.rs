@@ -57,6 +57,10 @@ impl Registry {
         self.actors.remove(pid);
     }
 
+    pub fn remove_all(&self) {
+        self.actors.clear();
+    }
+
     pub fn add<A>(&self, actor: HydratedActor<A>)
     where
         A: IntoAsyncActor,

@@ -10,11 +10,11 @@ use std::{
 use crate::{
     actor::{ActorControlBlock, HydratedActor, HydratedActorBase, NamedRef, Pid, Signal, ToPid},
     async_actor::IntoAsyncActor,
-    pending_once::pending_once,
     port::{Port, PortContext, PortRef},
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
+    utils::pending_once,
 };
 
 thread_local! {
@@ -59,18 +59,25 @@ pub(crate) fn reset_context() {
     CONTEXT.with(|ctx| ctx.set(std::ptr::null_mut()));
 }
 
+/// Returns the current actors' PID
 pub fn pid() -> Pid {
     context().pid()
 }
 
+/// Stops the system
 pub fn stop() {
     context().scheduler.stop_all();
 }
 
+/// Register a name for an actor
 pub fn register(name: NamedRef, actor: Pid) {
     context().registry.register(name, actor);
 }
 
+/// Traps the exit signal
+///
+/// Normally when an actor receives a exit signal from a linked actor, it will exit itself if the reason is not `Exit::Normal`.
+/// However when exits are trapped they are unconditionally turned into a `TrapExitMessage` message.
 pub fn trap_exit(should_trap: bool) {
     context()
         .actor
@@ -79,7 +86,13 @@ pub fn trap_exit(should_trap: bool) {
         .store(should_trap, Ordering::Relaxed);
 }
 
+/// Sleeps for a given duration
+///
+/// This will spend 1 budget unit.
 pub async fn sleep(duration: Duration) {
+    // We don't use yield_now here because we're already going to sleep.
+    context_mut().budget += 1;
+
     context().timer.wake_up(pid(), duration);
     let now = Instant::now();
 
@@ -88,6 +101,9 @@ pub async fn sleep(duration: Duration) {
     }
 }
 
+/// Sends a signal to an actor.
+///
+/// If the actor is not found, the signal is dropped.
 pub fn send_signal(to: Pid, message: Signal) {
     let context = context();
 
@@ -97,13 +113,20 @@ pub fn send_signal(to: Pid, message: Signal) {
     }
 }
 
+/// Schedule a message to be delivered to an actor after a given delay.
+///
+/// If the actor is not found, the signal is dropped.
 pub fn schedule<T>(to: Pid, message: T, delay: Duration)
 where
     T: Send + 'static,
 {
-    context().timer.add(to, delay, Box::new(message));
+    context().timer.add(to, delay, message);
 }
 
+/// Send a message to an actor.
+///
+/// If the actor is not found, the message is dropped.
+/// an actor can either be a `Pid` or a `NamedRef`.
 pub fn send<M>(to: impl ToPid, message: M)
 where
     M: Send + 'static,
@@ -119,6 +142,10 @@ where
     }
 }
 
+/// Spawns a new actor.
+///
+/// The spawned actor will not be linked to the current actor.
+/// The Pid of the spawned actor is returned.
 pub fn spawn<B>(behavior: B) -> Pid
 where
     B: IntoAsyncActor,
@@ -143,6 +170,9 @@ where
     pid
 }
 
+/// Spawns a new actor and links it to the current actor.
+///
+/// The Pid of the spawned actor is returned.
 pub fn spawn_linked<B>(behavior: B) -> Pid
 where
     B: IntoAsyncActor,
@@ -226,6 +256,43 @@ where
     }
 }
 
+/// Yield the current actor if the budget is spent.
+///
+/// # Parameters
+///
+/// * `budget`: The amount of budget to spend.
+///
+/// This allows other actors to run.
+/// If you use the `receive!` macro, that will automatically yield.
+pub fn yield_now(budget: usize) -> impl Future<Output = ()> {
+    const MAX_BUDGET: usize = 16;
+
+    struct YieldNow;
+
+    impl Future for YieldNow {
+        type Output = ();
+
+        fn poll(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            if context().budget >= MAX_BUDGET {
+                context_mut().budget = 0;
+                context().scheduler.schedule(pid());
+
+                std::task::Poll::Pending
+            } else {
+                std::task::Poll::Ready(())
+            }
+        }
+    }
+
+    context_mut().budget += budget;
+
+    YieldNow
+}
+
+#[doc(hidden)]
 #[must_use]
 pub async fn recv_matching<F>(
     timeout: Option<Duration>,
@@ -234,19 +301,13 @@ pub async fn recv_matching<F>(
 where
     F: Fn(&Box<dyn Any + Send>) -> bool,
 {
-    const MAX_BUDGET: usize = 16;
-
     let now = Instant::now();
 
     if let Some(timeout) = timeout {
         context().timer.wake_up(pid(), timeout);
     }
 
-    if context().budget >= MAX_BUDGET {
-        context_mut().budget = 0;
-        context().scheduler.schedule(pid());
-        pending_once().await;
-    }
+    yield_now(0).await;
 
     std::future::poll_fn(move |_cx| {
         if let Some(timeout) = timeout {
@@ -256,7 +317,7 @@ where
             }
         }
 
-        if let Some(message) = context().actor.pop_matching(&matcher) {
+        if let Some(message) = context().actor.queue().remove_matching(&matcher) {
             context_mut().budget += 1;
             std::task::Poll::Ready(Ok(message))
         } else {
@@ -266,6 +327,21 @@ where
     .await
 }
 
+/// Start receiving a message matching a given pattern.
+///
+/// This will spend 1 budget unit.
+///
+///
+/// # Example
+/// ```ignore
+/// receive!({
+///     match String: msg => {
+///         println!("Received message: {}", msg);
+///     },
+///     after Duration::from_secs(1) => {
+///         println!("Timeout occurred");
+///     }
+/// });
 #[macro_export]
 macro_rules! receive {
     ({

@@ -1,5 +1,4 @@
 use std::{
-    any::Any,
     collections::BinaryHeap,
     sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
@@ -67,13 +66,16 @@ impl Timer {
         self.cond.notify_one(); // Wake timer thread if sleeping
     }
 
-    pub fn add(&self, pid: Pid, duration: Duration, message: Box<dyn Any + Send>) {
+    pub fn add<T>(&self, pid: Pid, duration: Duration, message: T)
+    where
+        T: Send + 'static,
+    {
         let expire_at = Instant::now() + duration;
         let mut entries = self.entries.lock().expect("Failed to acquire lock");
         entries.push(Entry {
             pid,
             expire_at,
-            message: Signal::Message(message),
+            message: Signal::Message(Box::new(message)),
         });
         self.cond.notify_one(); // Wake timer thread if sleeping
     }
