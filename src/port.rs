@@ -213,6 +213,12 @@ impl<A> PortRef<A> {
     }
 }
 
+impl<A> From<PortRef<A>> for PortPid {
+    fn from(value: PortRef<A>) -> Self {
+        value.port_pid()
+    }
+}
+
 impl<A> Copy for PortRef<A> {}
 
 impl<A> Clone for PortRef<A> {

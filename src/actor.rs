@@ -11,7 +11,8 @@ use std::{
 };
 
 use crate::{
-    actor::waker::ActorWaker, async_actor::IntoAsyncActor, scheduler::Scheduler, utils::UnsortedSet,
+    actor::waker::ActorWaker, async_actor::IntoAsyncActor, port::PortPid, scheduler::Scheduler,
+    utils::UnsortedSet,
 };
 
 pub use control_block::{ActorControlBlock, MAX_LINKS};
@@ -30,6 +31,7 @@ pub trait HydratedActorBase: Send + Sync + 'static {
 
     fn queue(&self) -> MutexGuard<MessageQueue>;
     fn links(&self) -> MutexGuard<UnsortedSet<Pid, MAX_LINKS>>;
+    fn ports(&self) -> MutexGuard<UnsortedSet<PortPid, MAX_LINKS>>;
 }
 
 pub struct TrapExitMessage {
@@ -48,6 +50,13 @@ where
     fn links(&self) -> MutexGuard<UnsortedSet<Pid, MAX_LINKS>> {
         self.control_block
             .links
+            .lock()
+            .expect("Failed to acquire lock")
+    }
+
+    fn ports(&self) -> MutexGuard<UnsortedSet<PortPid, MAX_LINKS>> {
+        self.control_block
+            .ports
             .lock()
             .expect("Failed to acquire lock")
     }

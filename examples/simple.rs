@@ -1,12 +1,22 @@
+use std::time::Duration;
+
 use kerosene::{
     actor::Exit,
-    global::{send, spawn, spawn_linked, stop},
+    file::read_string,
+    global::{send, sleep, spawn, spawn_linked, stop},
     main, receive,
 };
 
 main!(main_actor);
 
 async fn main_actor() -> Exit {
+    spawn(async move || {
+        let _ = read_string("Cargo.toml").await;
+
+        Exit::Normal
+    });
+
+    sleep(Duration::from_secs(1)).await;
     spawn(sender);
 
     Exit::Normal

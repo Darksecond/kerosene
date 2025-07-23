@@ -14,7 +14,7 @@ pub use run_queue::RunQueue;
 
 use crate::{
     actor::{Pid, Signal},
-    port::{PortPid, PortTable},
+    port::{PortPid, PortTable, Reason},
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
@@ -130,8 +130,13 @@ impl Worker {
             Some(exit) => {
                 eprintln!("Actor {} exited with reason {:?}", pid.0, exit);
                 let links = actor.links();
+                let port_links = actor.ports();
 
                 registry.remove(pid);
+
+                for port in port_links.iter().copied() {
+                    unsafe { &mut *ports }.close(port, Reason::Close);
+                }
 
                 for linked in links.iter().copied() {
                     if let Some(child) = registry.lookup_pid(linked) {

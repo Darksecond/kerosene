@@ -10,7 +10,7 @@ use std::{
 use crate::{
     actor::{ActorControlBlock, HydratedActor, HydratedActorBase, Pid, Signal, ToPid},
     async_actor::IntoAsyncActor,
-    port::{Port, PortRef, PortTable, Reason},
+    port::{Port, PortPid, PortRef, PortTable, Reason},
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
@@ -223,16 +223,17 @@ where
     // TODO: Introduce port signals
     context.ports().get_mut(port.port_pid()).unwrap().start();
 
+    context.actor.ports().insert(port.port_pid());
+
     port
 }
 
-pub fn close_port<P>(port: PortRef<P>)
-where
-    P: Port,
-{
+pub fn close_port(port: impl Into<PortPid>) {
+    let port = port.into();
     let context = context();
 
-    context.ports().close(port.port_pid(), Reason::Close);
+    context.ports().close(port, Reason::Close);
+    context.actor.ports().remove(&port);
 }
 
 pub fn send_port<P>(port: PortRef<P>, message: P::Message)
