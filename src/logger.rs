@@ -16,17 +16,17 @@ pub enum Message {
 
 #[derive(Copy, Clone)]
 pub struct Logger {
-    inner: &'static str,
+    name: &'static str,
 }
 
 impl Logger {
     pub const fn global() -> Self {
         Self {
-            inner: "global_logger",
+            name: "global_logger",
         }
     }
 
     pub fn debug(&self, msg: impl Into<String>) {
-        send(self.inner, Message::Debug(msg.into()));
+        send(self.name, Message::Debug(msg.into()));
     }
 }

@@ -4,15 +4,13 @@ use std::sync::{
     mpsc::{self, Receiver, Sender},
 };
 
-use crate::actor::Pid;
-
-pub struct RunQueue {
+pub struct RunQueue<T> {
     length: AtomicUsize,
-    sender: Sender<Pid>,
-    receiver: Mutex<Receiver<Pid>>,
+    sender: Sender<T>,
+    receiver: Mutex<Receiver<T>>,
 }
 
-impl RunQueue {
+impl<T> RunQueue<T> {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
@@ -22,12 +20,12 @@ impl RunQueue {
         }
     }
 
-    pub fn push(&self, pid: Pid) {
-        self.sender.send(pid).expect("Failed to enqueue PID");
+    pub fn push(&self, item: T) {
+        self.sender.send(item).expect("Failed to enqueue item");
         self.length.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn try_pop(&self) -> Option<Pid> {
+    pub fn try_pop(&self) -> Option<T> {
         let item = self
             .receiver
             .lock()

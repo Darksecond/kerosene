@@ -10,7 +10,7 @@ use std::{
 use crate::{
     actor::{ActorControlBlock, HydratedActor, HydratedActorBase, Pid, Signal, ToPid},
     async_actor::IntoAsyncActor,
-    port::{Port, PortContext, PortRef},
+    port::{Port, PortRef, PortTable, Reason},
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
@@ -28,6 +28,7 @@ pub(crate) struct GlobalContext<'a> {
     pub(crate) registry: &'a Arc<Registry>,
     pub(crate) scheduler: &'a Arc<Scheduler>,
     pub(crate) timer: &'a Arc<Timer>,
+    pub(crate) ports: *mut PortTable,
 
     pub(crate) _marker: PhantomData<*const ()>,
 }
@@ -36,6 +37,11 @@ impl<'a> GlobalContext<'a> {
     #[inline]
     pub fn pid(&self) -> Pid {
         self.actor.control_block().pid
+    }
+
+    #[inline]
+    pub fn ports(&self) -> &mut PortTable {
+        unsafe { &mut *self.ports }
     }
 }
 
@@ -207,17 +213,15 @@ where
     P: Port,
 {
     let context = context();
-    let port = context.actor.ports().create(port);
+    let port = context.ports().create(
+        context.scheduler.clone(),
+        context.registry.clone(),
+        context.pid(),
+        port,
+    );
 
-    let port_context = PortContext {
-        port: port.port_pid(),
-        scheduler: context.scheduler.clone(),
-        registry: context.registry.clone(),
-    };
-
-    if let Some(port) = context.actor.ports().get_mut(port) {
-        port.start(port_context);
-    }
+    // TODO: Introduce port signals
+    context.ports().get_mut(port.port_pid()).unwrap().start();
 
     port
 }
@@ -227,16 +231,8 @@ where
     P: Port,
 {
     let context = context();
-    let port_context = PortContext {
-        port: port.port_pid(),
-        scheduler: context.scheduler.clone(),
-        registry: context.registry.clone(),
-    };
 
-    if let Some(port) = context.actor.ports().get_mut(port) {
-        port.stop(port_context);
-    }
-    context.actor.ports().close(port);
+    context.ports().close(port.port_pid(), Reason::Close);
 }
 
 pub fn send_port<P>(port: PortRef<P>, message: P::Message)
@@ -244,16 +240,11 @@ where
     P: Port,
 {
     let context = context();
-    let pid = port.port_pid();
-    if let Some(port) = context.actor.ports().get_mut(port) {
-        let port_context = PortContext {
-            port: pid,
-            scheduler: context.scheduler.clone(),
-            registry: context.registry.clone(),
-        };
 
-        port.receive(port_context, message);
-    }
+    context
+        .registry
+        .ports
+        .send(context.scheduler, port, message);
 }
 
 /// Yield the current actor if the budget is spent.

@@ -94,7 +94,7 @@ impl Monitor {
                 entry.snapshot = snapshot;
             }
 
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 }
@@ -141,7 +141,7 @@ fn detect_overload(
         .saturating_sub(entry.snapshot.run_queue_length);
     let imbalance = snapshot.run_queue_length > queue_length_median * OVERLOAD_IMBALANCE_THRESHOLD;
 
-    growth > OVERLOAD_GROWTH_THRESHOLD || imbalance
+    growth > OVERLOAD_GROWTH_THRESHOLD && imbalance
 }
 
 pub fn rebalance_worker(

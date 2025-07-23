@@ -8,6 +8,7 @@ use std::{
 
 use crate::{
     actor::Pid,
+    port::PortPid,
     registry::Registry,
     worker::{ActiveWorker, Worker, WorkerId},
 };
@@ -126,6 +127,13 @@ impl Scheduler {
 
                 self.wake_worker(worker_id);
             }
+        }
+    }
+
+    pub fn schedule_port(&self, port: PortPid) {
+        if let Some(worker) = self.get_worker(port.worker()) {
+            worker.port_run_queue.push(port);
+            self.wake_worker(port.worker());
         }
     }
 }

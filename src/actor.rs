@@ -11,8 +11,7 @@ use std::{
 };
 
 use crate::{
-    actor::waker::ActorWaker, async_actor::IntoAsyncActor, port::PortTable, scheduler::Scheduler,
-    utils::UnsortedSet,
+    actor::waker::ActorWaker, async_actor::IntoAsyncActor, scheduler::Scheduler, utils::UnsortedSet,
 };
 
 pub use control_block::{ActorControlBlock, MAX_LINKS};
@@ -29,7 +28,6 @@ pub trait HydratedActorBase: Send + Sync + 'static {
 
     fn has_messages(&self) -> bool;
 
-    fn ports(&self) -> MutexGuard<PortTable>;
     fn queue(&self) -> MutexGuard<MessageQueue>;
     fn links(&self) -> MutexGuard<UnsortedSet<Pid, MAX_LINKS>>;
 }
@@ -43,10 +41,6 @@ impl<B> HydratedActorBase for HydratedActor<B>
 where
     B: IntoAsyncActor,
 {
-    fn ports(&self) -> MutexGuard<PortTable> {
-        self.ports.lock().expect("Failed to acquire lock")
-    }
-
     fn queue(&self) -> MutexGuard<MessageQueue> {
         self.messages.lock().expect("Failed to acquire lock")
     }
@@ -186,7 +180,6 @@ where
     pub inbox: Inbox<Signal>,
     waker: Arc<ActorWaker>,
     messages: Mutex<MessageQueue>,
-    ports: Mutex<PortTable>,
     actor: Mutex<ActorState<A>>,
 }
 
@@ -206,7 +199,6 @@ where
             inbox: Inbox::new(),
             waker: Arc::new(ActorWaker::new(scheduler.clone(), pid)),
             actor: Mutex::new(ActorState::Waiting(actor)),
-            ports: Mutex::new(PortTable::new(pid)),
             messages: Mutex::new(MessageQueue::new()),
         }
     }

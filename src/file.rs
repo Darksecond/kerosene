@@ -2,7 +2,10 @@ use std::{
     fs::File,
     io::{Error, ErrorKind, Read},
     path::PathBuf,
-    sync::mpsc::{Sender, channel},
+    sync::{
+        Arc,
+        mpsc::{Sender, channel},
+    },
 };
 
 use crate::{
@@ -24,7 +27,8 @@ impl FilePort {
 impl Port for FilePort {
     type Message = FileRequest;
 
-    fn start(&mut self, ctx: PortContext) {
+    fn start(&mut self, ctx: &Arc<PortContext>) {
+        let ctx = ctx.clone();
         let (tx, rx) = channel();
         self.tx = Some(tx);
 
@@ -70,11 +74,11 @@ impl Port for FilePort {
         });
     }
 
-    fn stop(&mut self, _ctx: PortContext) {
+    fn stop(&mut self, _ctx: &Arc<PortContext>) {
         drop(self.tx.take());
     }
 
-    fn receive(&mut self, _ctx: PortContext, message: Self::Message) {
+    fn receive(&mut self, _ctx: &Arc<PortContext>, message: Self::Message) {
         if let Some(tx) = &self.tx {
             let _ = tx.send(message);
         }
