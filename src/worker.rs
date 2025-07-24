@@ -13,8 +13,8 @@ use std::{
 pub use run_queue::RunQueue;
 
 use crate::{
-    actor::{Pid, Signal},
-    port::{PortPid, PortTable, Reason},
+    actor::{Exit, Pid, Signal},
+    port::{PortPid, PortTable},
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
@@ -135,7 +135,7 @@ impl Worker {
                 registry.remove(pid);
 
                 for port in port_links.iter().copied() {
-                    unsafe { &mut *ports }.close(port, Reason::Close);
+                    unsafe { &mut *ports }.close(port, Exit::Normal);
                 }
 
                 for linked in links.iter().copied() {

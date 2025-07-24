@@ -1,14 +1,11 @@
 use std::time::{Duration, Instant};
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use benchmark::{measure, scale};
 use kerosene::{
-    actor::{Exit, Pid},
-    async_actor::IntoAsyncActor,
+    Exit, IntoAsyncActor, Pid,
     global::{send, sleep, spawn, stop},
     receive,
 };
-
-static mut TIME: Duration = Duration::ZERO;
 
 async fn receive_actor() -> Exit {
     let mut count = 0;
@@ -18,7 +15,7 @@ async fn receive_actor() -> Exit {
             match i32: _ => { count += 1;}
         });
         if count == 100000 {
-            unsafe { TIME = now.elapsed() };
+            measure(now.elapsed());
             stop();
         }
     }
@@ -45,16 +42,10 @@ async fn main_actor() -> Exit {
     Exit::Normal
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("receive 100000 messages", |b| {
-        b.iter_custom(|iters| {
-            for _ in 0..iters {
-                kerosene::run(main_actor);
-            }
-            unsafe { TIME }
-        });
+fn main() {
+    benchmark::benchmark("receive 100000 messages", || {
+        scale(100000);
+
+        kerosene::run(main_actor);
     });
 }
-
-criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);

@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use crate::queue::Queue;
+use crate::utils::Queue;
 
 const QUEUE_SIZE: usize = 1024;
 

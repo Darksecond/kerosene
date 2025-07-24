@@ -6,6 +6,7 @@ mod waker;
 
 use std::{
     any::Any,
+    io,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard, atomic::Ordering},
 };
@@ -36,6 +37,11 @@ pub trait HydratedActorBase: Send + Sync + 'static {
 
 pub struct TrapExitMessage {
     pub pid: Pid,
+    pub reason: Exit,
+}
+
+pub struct TrapPortExitMessage {
+    pub port: PortPid,
     pub reason: Exit,
 }
 
@@ -85,6 +91,18 @@ where
                         return Some(reason);
                     }
                 }
+                Signal::PortExit(pid, reason) => {
+                    self.ports().remove(&pid);
+
+                    if self.control_block.trap_exit.load(Ordering::Relaxed) {
+                        self.messages
+                            .lock()
+                            .unwrap()
+                            .push(Box::new(TrapPortExitMessage { port: pid, reason }));
+                    } else if reason != Exit::Normal {
+                        return Some(reason);
+                    }
+                }
                 Signal::Kill => return Some(Exit::Killed),
                 Signal::Link(pid) => {
                     let _ = self.control_block.add_link(pid);
@@ -127,7 +145,7 @@ where
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Exit {
     /// Graceful shutdown (actor chose to exit normally)
     Normal,
@@ -140,10 +158,13 @@ pub enum Exit {
 
     /// Actor was killed intentionally (e.g. supervisor or monitor)
     Killed,
+
+    Io(io::ErrorKind),
 }
 
 pub enum Signal {
     Exit(Pid, Exit),
+    PortExit(PortPid, Exit),
     Kill,
     Link(Pid),
     Unlink(Pid),

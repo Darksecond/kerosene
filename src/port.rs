@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    actor::{Inbox, Pid, Signal},
+    actor::{Exit, Inbox, Pid, Signal},
     registry::Registry,
     scheduler::Scheduler,
     worker::WorkerId,
@@ -57,16 +57,16 @@ where
 }
 
 pub trait ErasedHydratedPort {
-    fn poll(&mut self) -> Option<Reason>;
+    fn poll(&mut self) -> Option<Exit>;
     fn start(&mut self);
-    fn close(&mut self, reason: Reason);
+    fn close(&mut self, reason: Exit);
 }
 
 impl<T> ErasedHydratedPort for HydratedPort<T>
 where
     T: Port,
 {
-    fn poll(&mut self) -> Option<Reason> {
+    fn poll(&mut self) -> Option<Exit> {
         self.inbox.is_scheduled.store(false, Ordering::Release);
 
         while let Some(message) = self.inbox.inbox.pop() {
@@ -90,24 +90,12 @@ where
         self.port.start(&self.context);
     }
 
-    fn close(&mut self, reason: Reason) {
+    fn close(&mut self, reason: Exit) {
         self.port.stop(&self.context);
 
-        self.context.send(PortExit {
-            port: self.inbox.port.port,
-            reason,
-        });
+        self.context
+            .send_signal(Signal::PortExit(self.inbox.port.port_pid(), reason));
     }
-}
-
-pub enum Reason {
-    Normal,
-    Close,
-}
-
-pub struct PortExit {
-    pub port: PortPid,
-    pub reason: Reason,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -149,7 +137,7 @@ pub struct PortContext {
     owner: AtomicU64,
     registry: Arc<Registry>,
     scheduler: Arc<Scheduler>,
-    exit: Mutex<Option<Reason>>,
+    exit: Mutex<Option<Exit>>,
 }
 
 impl PortContext {
@@ -162,20 +150,24 @@ impl PortContext {
         }
     }
 
+    pub fn send_signal(&self, signal: Signal) {
+        let owner = self.owner();
+
+        if let Some(actor) = self.registry.lookup_pid(owner) {
+            actor.send_signal(signal);
+            self.scheduler.schedule(owner);
+        }
+    }
+
     pub fn send<M>(&self, message: M)
     where
         M: Send + 'static,
     {
         let message = Signal::Message(Box::new(message));
-        let owner = self.owner();
-
-        if let Some(actor) = self.registry.lookup_pid(owner) {
-            actor.send_signal(message);
-            self.scheduler.schedule(owner);
-        }
+        self.send_signal(message);
     }
 
-    pub fn exit(&self, reason: Reason) {
+    pub fn exit(&self, reason: Exit) {
         *self.exit.lock().expect("Failed to acquire lock") = Some(reason);
     }
 
@@ -309,7 +301,7 @@ impl PortTable {
         port_ref
     }
 
-    pub fn close(&mut self, port: PortPid, reason: Reason) {
+    pub fn close(&mut self, port: PortPid, reason: Exit) {
         if let Some(entry) = self.ports.get_mut(port.index as usize) {
             if entry.generation == port.generation {
                 if let Some(mut port) = entry.port.take() {
@@ -341,6 +333,11 @@ impl PortInboxTable {
         Self {
             table: RwLock::new(HashMap::new()),
         }
+    }
+
+    pub fn clear(&self) {
+        let mut table = self.table.write().expect("Failed to acquire lock");
+        table.clear();
     }
 
     pub fn insert<T>(&self, port_ref: PortRef<T>, inbox: Arc<PortInbox<T>>)

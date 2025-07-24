@@ -62,6 +62,7 @@ impl Registry {
 
     pub fn remove_all(&self) {
         self.actors.clear();
+        self.ports.clear();
     }
 
     pub fn add<A>(&self, actor: HydratedActor<A>)

@@ -7,8 +7,12 @@ edition = "2024"
 debug = "line-tables-only"
 
 [dev-dependencies]
-criterion = { version = "0.6", features = ["html_reports"] }
+benchmark = { path = "crates/benchmark" }
 
 [[bench]]
 name = "receive"
+harness = false
+
+[[bench]]
+name = "custom"
 harness = false

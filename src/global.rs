@@ -1,3 +1,8 @@
+//! Actor context
+//!
+//! This module provides functions that can be used within an actor.
+mod receive;
+
 use std::{
     any::Any,
     cell::Cell,
@@ -8,9 +13,9 @@ use std::{
 };
 
 use crate::{
-    actor::{ActorControlBlock, HydratedActor, HydratedActorBase, Pid, Signal, ToPid},
+    actor::{ActorControlBlock, Exit, HydratedActor, HydratedActorBase, Pid, Signal, ToPid},
     async_actor::IntoAsyncActor,
-    port::{Port, PortPid, PortRef, PortTable, Reason},
+    port::{Port, PortPid, PortRef, PortTable},
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
@@ -45,6 +50,7 @@ impl<'a> GlobalContext<'a> {
     }
 }
 
+#[doc(hidden)]
 pub enum RecvError {
     Timeout,
 }
@@ -83,7 +89,11 @@ pub fn register(name: &'static str, actor: Pid) {
 /// Traps the exit signal
 ///
 /// Normally when an actor receives a exit signal from a linked actor, it will exit itself if the reason is not `Exit::Normal`.
-/// However when exits are trapped they are unconditionally turned into a `TrapExitMessage` message.
+/// However when exits are trapped they are unconditionally turned into a message.
+///
+/// The following messages can be received when trap_exit is set:
+/// - `TrapExitMessage`: when a linked actor dies.
+/// - `TrapPortExitMessage`: when a linked port dies.
 pub fn trap_exit(should_trap: bool) {
     context()
         .actor
@@ -232,7 +242,7 @@ pub fn close_port(port: impl Into<PortPid>) {
     let port = port.into();
     let context = context();
 
-    context.ports().close(port, Reason::Close);
+    context.ports().close(port, Exit::Normal);
     context.actor.ports().remove(&port);
 }
 
@@ -317,80 +327,4 @@ where
         }
     })
     .await
-}
-
-/// Start receiving a message matching a given pattern.
-///
-/// This will spend 1 budget unit.
-///
-///
-/// # Example
-/// ```ignore
-/// receive!({
-///     match String: msg => {
-///         println!("Received message: {}", msg);
-///     },
-///     after Duration::from_secs(1) => {
-///         println!("Timeout occurred");
-///     }
-/// });
-#[macro_export]
-macro_rules! receive {
-    ({
-        $(
-            match $ty:ty: $pat:pat_param  $( if $guard:expr )? => $block:block
-        ),+ $(,)?
-        $( after $timeout:expr => $timeout_block:block )? $(,)?
-    }) => {{
-        #[allow(unused_variables)]
-        let timeout: Option<std::time::Duration> = None;
-        $( let timeout = Some($timeout); )?
-
-        let msg = $crate::global::recv_matching(timeout, |msg| {
-                $(
-                  if let Some(msg) = msg.downcast_ref::<$ty>() {
-                      #[allow(unused_variables)]
-                      #[allow(irrefutable_let_patterns)]
-                      if let $pat = msg {
-                          $(if !$guard { return false;} )?
-                          return true;
-                      }
-                  }
-                )*
-
-                false
-            })
-            .await;
-
-        match msg {
-            Ok(msg) => {
-                'inner: loop {
-                $(
-                    if let Some(msg_ref) = msg.downcast_ref::<$ty>() {
-                        #[allow(unused_variables)]
-                        #[allow(irrefutable_let_patterns)]
-                        let is_match = if let $pat = msg_ref {
-                            true
-                        } else { false };
-
-                        if is_match {
-                            if let Some($pat) = msg.downcast::<$ty>().ok().map(|msg| *msg) {
-                                $block
-                            }
-
-                            break 'inner;
-                        }
-                    }
-                )*
-
-                    unreachable!("recv_matching returned a message that did not match any arm");
-
-                }
-            },
-            Err(_) => {
-                $( $timeout_block )?
-            },
-        }
-
-    }};
 }

@@ -2,30 +2,32 @@ use std::{num::NonZero, sync::Arc, time::Duration};
 
 use crate::{
     actor::{ActorControlBlock, HydratedActor},
-    async_actor::IntoAsyncActor,
-    logger::{Logger, logger_actor},
+    library::{
+        logger::{Logger, logger_actor},
+        supervisor::{RestartPolicy, Strategy, Supervisor},
+    },
     monitor::Monitor,
     registry::Registry,
     scheduler::Scheduler,
-    supervisor::{RestartPolicy, Strategy, Supervisor},
     timer::Timer,
     worker::{ActiveWorker, Worker},
 };
 
-pub mod actor;
-pub mod async_actor;
-pub mod file;
+mod actor;
+mod async_actor;
 pub mod global;
-pub mod logger;
-pub mod monitor;
-pub mod port;
-pub mod queue;
-pub mod registry;
-pub mod scheduler;
-pub mod supervisor;
-pub mod timer;
-pub mod utils;
-pub mod worker;
+pub mod library;
+mod monitor;
+mod port;
+mod registry;
+mod scheduler;
+mod timer;
+mod utils;
+mod worker;
+
+pub use actor::{Exit, Pid, TrapExitMessage, TrapPortExitMessage};
+pub use async_actor::IntoAsyncActor;
+pub use port::{Port, PortPid, PortRef};
 
 fn main_actor<A>(actor: A) -> impl IntoAsyncActor
 where

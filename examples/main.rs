@@ -1,9 +1,12 @@
 use std::time::{Duration, Instant};
 
 use kerosene::{
-    actor::Exit,
-    file, global, main, receive,
-    supervisor::{RestartPolicy, Strategy, Supervisor},
+    Exit, global,
+    library::{
+        self,
+        supervisor::{RestartPolicy, Strategy, Supervisor},
+    },
+    main, receive,
 };
 
 main!(main_actor);
@@ -18,7 +21,7 @@ async fn main_actor() -> Exit {
 
     global::spawn(stop_actor);
 
-    let contents = file::read_string("Cargo.toml")
+    let contents = library::file::read_string("Cargo.toml")
         .await
         .ok()
         .unwrap_or(String::new());

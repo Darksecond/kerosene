@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use kerosene::{
-    actor::Exit,
-    file::read_string,
+    Exit,
     global::{send, sleep, spawn, spawn_linked, stop},
+    library::file::read_string,
     main, receive,
 };
 

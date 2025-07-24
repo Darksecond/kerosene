@@ -19,9 +19,9 @@ An actor has access to a suite of functions when it is running. They are thread 
 These include for example: `spawn`, `sleep`, `send` and `schedule`.
 
 This library is a heavy work in progress and API's will change as work progresses. Amongst the work currently in progress is:
-- Rework ports, introduce port signals, improve port linking.
+- Rework ports, introduce port signals.
 - Add more examples and documentation.
-- Add more featuers to the 'standard library'.Right now there is a logger, but it is barely used. A supervisor is also available.
+- Add more features to the 'standard library'.Right now there is a logger, but it is barely used. A supervisor is also available.
 - Remove locks, especially actor has multiple locks that are not needed. They can be removed.
 
 In the longer term it would be nice to add more advanced features like real async IO support using something like `mio` or `io_uring`.

@@ -104,6 +104,7 @@ impl<const S: usize, T> Queue<S, T> {
     }
 
     /// Returns true if the queue is full.
+    #[allow(dead_code)]
     pub fn is_full(&self) -> bool {
         let head = self.head.load(Ordering::Acquire);
         let tail = self.published.load(Ordering::Acquire);
@@ -112,6 +113,7 @@ impl<const S: usize, T> Queue<S, T> {
     }
 
     /// Returns the number of elements in the queue.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         let tail = self.tail.load(Ordering::Acquire);
         let published = self.published.load(Ordering::Acquire);
