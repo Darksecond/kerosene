@@ -6,7 +6,6 @@ use crate::{
         logger::{Logger, logger_actor},
         supervisor::{RestartPolicy, Strategy, Supervisor},
     },
-    monitor::Monitor,
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
@@ -17,7 +16,7 @@ mod actor;
 mod async_actor;
 pub mod global;
 pub mod library;
-mod monitor;
+mod migration;
 mod port;
 mod registry;
 mod scheduler;
@@ -69,7 +68,14 @@ fn start_worker(registry: Arc<Registry>, scheduler: Arc<Scheduler>, timer: Arc<T
         })
     };
 
-    let _ = scheduler.replace_slot(id, ActiveWorker { handle, worker });
+    let _ = scheduler.replace_slot(
+        id,
+        ActiveWorker {
+            thread: handle.thread().clone(),
+            handle: Some(handle),
+            worker,
+        },
+    );
 }
 
 pub fn run<A>(entry_point: A)
@@ -109,7 +115,7 @@ where
         });
     }
 
-    Monitor::new(scheduler, registry).run();
+    scheduler.wait_all();
 }
 
 #[macro_export]

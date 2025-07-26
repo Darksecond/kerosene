@@ -5,15 +5,16 @@ use std::{
     marker::PhantomData,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    thread::JoinHandle,
+    thread::{JoinHandle, Thread},
 };
 
 pub use run_queue::RunQueue;
 
 use crate::{
     actor::{Exit, Pid, Signal},
+    migration::Migration,
     port::{PortPid, PortTable},
     registry::Registry,
     scheduler::Scheduler,
@@ -24,12 +25,17 @@ pub type WorkerId = usize;
 
 pub struct ActiveWorker {
     pub worker: Arc<Worker>,
-    pub handle: JoinHandle<()>,
+    pub thread: Thread,
+    pub handle: Option<JoinHandle<()>>,
 }
 
 impl ActiveWorker {
     pub fn new(worker: Arc<Worker>, handle: JoinHandle<()>) -> Self {
-        Self { worker, handle }
+        Self {
+            worker,
+            thread: handle.thread().clone(),
+            handle: Some(handle),
+        }
     }
 }
 
@@ -38,6 +44,9 @@ pub struct Worker {
     pub run_queue: RunQueue<Pid>,
     pub port_run_queue: RunQueue<PortPid>,
     pub running: AtomicBool,
+    pub reductions: AtomicU64,
+    pub max_queue_length: AtomicUsize,
+    pub migration: Migration,
 }
 
 pub struct WorkerSnapshot {
@@ -51,6 +60,9 @@ impl Worker {
             run_queue: RunQueue::new(),
             port_run_queue: RunQueue::new(),
             running: AtomicBool::new(true),
+            reductions: AtomicU64::new(2000 * 1000),
+            max_queue_length: AtomicUsize::new(0),
+            migration: Migration::new(),
         }
     }
 
@@ -68,10 +80,34 @@ impl Worker {
         let ports = UnsafeCell::new(PortTable::new(self.spawn_at));
 
         while self.running.load(Ordering::Relaxed) {
-            if let Some(pid) = self.run_queue.try_pop() {
-                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer)
-            } else if let Some(port) = self.port_run_queue.try_pop() {
+            self.max_queue_length
+                .fetch_max(self.run_queue.len(), Ordering::Relaxed);
+
+            // Try and balance the workers
+            if self.reductions.fetch_sub(1, Ordering::Relaxed) == 0 {
+                // Should balance
+                if !scheduler.try_balance(self.spawn_at) {
+                    self.reductions.store(u64::MAX, Ordering::Relaxed);
+                }
+            }
+
+            // Try and push an actor according to the migration parameters
+            {
+                let parameters = self.migration.load_for_push();
+                if parameters.mode == crate::migration::Mode::Push {
+                    scheduler.try_push(self.spawn_at, parameters);
+                } else if parameters.mode == crate::migration::Mode::Pull {
+                    scheduler.try_pull(self.spawn_at, parameters);
+                }
+            }
+
+            if let Some(port) = self.port_run_queue.try_pop() {
                 self.run_ports(unsafe { &mut *ports.get() }, port);
+            } else if let Some(pid) = self.run_queue.try_pop() {
+                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer)
+            } else if let Some(pid) = scheduler.try_steal(self.spawn_at) {
+                eprintln!("Worker {} stealing pid {}", self.spawn_at, pid.0);
+                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer)
             } else {
                 std::thread::park();
             }

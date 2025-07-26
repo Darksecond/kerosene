@@ -294,6 +294,7 @@ pub fn yield_now(budget: usize) -> impl Future<Output = ()> {
     YieldNow
 }
 
+// TODO: We should consider tracking where we are in the message queue and resume from there, since obviously none of the previous messages matched.
 #[doc(hidden)]
 #[must_use]
 pub async fn recv_matching<F>(
