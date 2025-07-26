@@ -79,9 +79,6 @@ impl Scheduler {
         }
     }
 
-    // TODO: Rework, this *will* keep one worker thread alive!
-    //       We should add a 'wait_all' that sits in the run function
-    //       Instead of joning the worker here.
     pub fn stop_all(&self) {
         let count = self.count.load(Ordering::Acquire);
         for worker_id in 0..count {
@@ -199,7 +196,7 @@ impl Scheduler {
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            println!("Balancing worker {}", worker);
+            println!("Balancing on worker {}", worker);
             self.balance();
             self.is_balancing.store(false, Ordering::Release);
 
@@ -230,10 +227,10 @@ impl Scheduler {
                 return;
             };
 
-            println!(
-                "Worker {} should pull {} from {}",
-                target.spawn_at, pid.0, source.spawn_at
-            );
+            // println!(
+            //     "Worker {} should pull {} from {}",
+            //     target.spawn_at, pid.0, source.spawn_at
+            // );
 
             if !actor.control_block().is_running.load(Ordering::Acquire) {
                 actor
@@ -270,10 +267,10 @@ impl Scheduler {
                 return;
             };
 
-            println!(
-                "Worker {} should push {} to {}",
-                source.spawn_at, pid.0, target.spawn_at
-            );
+            // println!(
+            //     "Worker {} should push {} to {}",
+            //     source.spawn_at, pid.0, target.spawn_at
+            // );
 
             if !actor.control_block().is_running.load(Ordering::Acquire) {
                 actor
@@ -291,9 +288,6 @@ impl Scheduler {
 
     fn balance(&self) {
         let worker_count = self.count.load(Ordering::Relaxed);
-
-        // Do balancing
-        eprintln!("Balancing...");
 
         let mut max_queue_lengths = Vec::with_capacity(worker_count);
         for i in 0..worker_count {
@@ -314,7 +308,7 @@ impl Scheduler {
             .collect::<Vec<_>>();
         max_queue_lengths.sort_by_key(|&(_, length)| length);
 
-        println!("{:?}", max_queue_lengths);
+        // println!("{:?}", max_queue_lengths);
 
         let mut parameters = vec![Parameters::none(); worker_count];
 
@@ -356,13 +350,6 @@ impl Scheduler {
         }
 
         // println!("{:?}", parameters);
-
-        // TODO:
-        //
-        // When a process is to be inserted into a ready queue
-        // and there is a migration path set from S1 to S2 the scheduler first checks that the run queue of S1 is larger than AMQL
-        // and that the run queue of S2 is smaller than the average.
-        // This way the migration is only allowed if both queues are still unbalanced.
 
         for i in 0..worker_count {
             let active_worker = &self.workers[i];
