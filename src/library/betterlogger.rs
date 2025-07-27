@@ -1,3 +1,18 @@
+//! The logger system is modeled on erlang's logger system.
+//! See <https://www.erlang.org/doc/apps/kernel/logger.html>.
+//!
+//! You can start a log message by using one of the helper methods, or by using `Logbuilder::new` directly.
+//! Then you can append metadata to the log message and format it using '{key}' in the log message.
+//!
+//! ```no_run
+//! use kerosene::library::betterlogger::debug;
+//! debug("Hello, {world}")
+//!     .with("world", "Earth")
+//!     .emit();
+//! ```
+//!
+//! There is system level metadata always availble, see `LogBuilder::emit` for details.
+
 use std::{fmt::Display, panic::Location};
 
 use crate::{
@@ -11,6 +26,7 @@ enum LogMessage {
     Log(Log),
 }
 
+/// The severity of the log message.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Level {
     Emergency,
@@ -38,6 +54,7 @@ impl Display for Level {
     }
 }
 
+/// Various types that are supported as metadata.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MetaValue {
     OwnedString(String),
@@ -91,7 +108,7 @@ impl From<Timestamp> for MetaValue {
 }
 
 #[derive(Clone, Debug)]
-pub struct MetaData {
+struct MetaData {
     key: &'static str,
     value: MetaValue,
 }
@@ -103,30 +120,43 @@ impl PartialEq for MetaData {
 }
 
 #[derive(Clone, Debug)]
-pub struct Log {
+struct Log {
     level: Level,
     message: &'static str, // TODO: Should probably be CoW
     values: UnsortedSet<MetaData, 16>,
 }
 
+/// Allows building a log message with metadata.
 #[must_use]
 pub struct LogBuilder {
     logger: &'static str,
     level: Level,
     message: &'static str,
     values: UnsortedSet<MetaData, 16>,
+    location: &'static Location<'static>,
 }
 
 impl LogBuilder {
+    #[track_caller]
     pub fn new(level: Level, message: &'static str) -> Self {
+        Self::with_location(Location::caller(), level, message)
+    }
+
+    pub fn with_location(
+        location: &'static Location<'static>,
+        level: Level,
+        message: &'static str,
+    ) -> Self {
         LogBuilder {
             logger: "betterlogger",
             level,
             message,
             values: UnsortedSet::new(),
+            location,
         }
     }
 
+    /// Add metadata to the log message
     pub fn with(mut self, key: &'static str, value: impl Into<MetaValue>) -> Self {
         let meta = MetaData {
             key,
@@ -136,10 +166,15 @@ impl LogBuilder {
         self
     }
 
-    #[track_caller]
+    /// Emit the log message
+    ///
+    /// This will insert the following metadata:
+    /// - time: The current timestamp
+    /// - pid: The process ID
+    /// - file: The file name where the log was emitted
+    /// - line: The line number where the log was emitted
     pub fn emit(self) {
-        let location = Location::caller();
-
+        let location = self.location;
         let mut values = self.values;
 
         values.insert(MetaData {
@@ -172,6 +207,57 @@ impl LogBuilder {
     }
 }
 
+/// Create a new log builder with the 'debug' level.
+#[track_caller]
+pub fn debug(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Debug, message)
+}
+
+/// Create a new log builder with the 'info' level.
+#[track_caller]
+pub fn info(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Info, message)
+}
+
+/// Create a new log builder with the 'notice' level.
+#[track_caller]
+pub fn notice(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Notice, message)
+}
+
+/// Create a new log builder with the 'warning' level.
+#[track_caller]
+pub fn warning(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Warning, message)
+}
+
+/// Create a new log builder with the 'error' level.
+#[track_caller]
+pub fn error(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Error, message)
+}
+
+/// Create a new log builder with the 'critical' level.
+#[track_caller]
+pub fn critical(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Critical, message)
+}
+
+/// Create a new log builder with the 'alert' level.
+#[track_caller]
+pub fn alert(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Alert, message)
+}
+
+/// Create a new log builder with the 'emergency' level.
+#[track_caller]
+pub fn emergency(message: &'static str) -> LogBuilder {
+    LogBuilder::with_location(Location::caller(), Level::Emergency, message)
+}
+
+/// The Logger actor.
+///
+/// This should be registered as 'betterlogger'.
 pub async fn logger_actor() -> Exit {
     loop {
         let message = receive_new! {
