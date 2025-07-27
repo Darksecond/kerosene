@@ -36,7 +36,7 @@ where
         let mut actor = Some(actor);
         let supervisor = Supervisor::spawn_linked(Strategy::OneForOne);
 
-        supervisor.supervise_named("logger", RestartPolicy::Permanent, || logger_actor);
+        supervisor.supervise(RestartPolicy::Permanent, || logger_actor);
 
         global::schedule(global::pid(), (), Duration::from_millis(10));
 
