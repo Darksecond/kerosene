@@ -104,10 +104,10 @@ impl Worker {
             if let Some(port) = self.port_run_queue.try_pop() {
                 self.run_ports(unsafe { &mut *ports.get() }, port);
             } else if let Some(pid) = self.run_queue.try_pop() {
-                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer)
+                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer);
             } else if let Some(pid) = scheduler.try_steal(self.spawn_at) {
                 eprintln!("Worker {} stealing pid {}", self.spawn_at, pid.0);
-                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer)
+                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer);
             } else {
                 std::thread::park();
             }

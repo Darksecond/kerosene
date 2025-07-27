@@ -140,15 +140,8 @@ macro_rules! receive_new {
             }
         )*
         else $else:ident $else_block:block
-        $(
-            after $timeout:expr => $timeout_block:expr $(,)?
-        )?
     } => {{
-        #[allow(unused_variables)]
-        let timeout: Option<std::time::Duration> = None;
-        $( let timeout = Some($timeout); )?
-
-        let msg = $crate::global::recv_matching(timeout, |_| true).await;
+        let msg = $crate::global::recv_matching(None, |_| true).await;
 
         match msg {
             Ok(msg) => {
@@ -160,6 +153,7 @@ macro_rules! receive_new {
                             $(
                                 $pat $(if $guard)? => $expr,
                             )+
+                            #[allow(unreachable_patterns)]
                             _ => unreachable!(),
                         }
                     }
@@ -170,7 +164,7 @@ macro_rules! receive_new {
                 }
             },
             Err(_) => {
-                $( $timeout_block )?
+                unreachable!()
             },
         }
     }};
@@ -182,15 +176,8 @@ macro_rules! receive_new {
             }
         )*
         else $else_block:block
-        $(
-            after $timeout:expr => $timeout_block:expr $(,)?
-        )?
     } => {{
-        #[allow(unused_variables)]
-        let timeout: Option<std::time::Duration> = None;
-        $( let timeout = Some($timeout); )?
-
-        let msg = $crate::global::recv_matching(timeout, |_| true).await;
+        let msg = $crate::global::recv_matching(None, |_| true).await;
 
         match msg {
             Ok(msg) => {
@@ -202,6 +189,7 @@ macro_rules! receive_new {
                             $(
                                 $pat $(if $guard)? => $expr,
                             )+
+                            #[allow(unreachable_patterns)]
                             _ => unreachable!(),
                         }
                     }
@@ -211,7 +199,7 @@ macro_rules! receive_new {
                 }
             },
             Err(_) => {
-                $( $timeout_block )?
+                unreachable!()
             },
         }
     }};
@@ -222,15 +210,8 @@ macro_rules! receive_new {
                 $($pat:pat $(if $guard:expr)? => $expr:expr),+ $(,)?
             }
         )*
-        $(
-            after $timeout:expr => $timeout_block:expr $(,)?
-        )?
     } => {{
-        #[allow(unused_variables)]
-        let timeout: Option<std::time::Duration> = None;
-        $( let timeout = Some($timeout); )?
-
-        let msg = $crate::global::recv_matching(timeout, |msg| {
+        let msg = $crate::global::recv_matching(None, |msg| {
             $(
                 if let Some(msg) = msg.downcast_ref::<$ty>() {
                     match msg {
@@ -238,6 +219,7 @@ macro_rules! receive_new {
                             #[allow(unused_variables)]
                             $pat $(if $guard)? => return true,
                         )+
+                        #[allow(unreachable_patterns)]
                         _ => (),
                     }
                 }
@@ -257,13 +239,137 @@ macro_rules! receive_new {
                             $(
                                 $pat $(if $guard)? => $expr,
                             )+
+                            #[allow(unreachable_patterns)]
                             _ => unreachable!(),
                         }
                     }
                 )*
+                else { unreachable!() }
             },
             Err(_) => {
-                $( $timeout_block )?
+                unreachable!()
+            },
+        }
+    }};
+
+    {
+        $(
+            match $ty:ty {
+                $($pat:pat $(if $guard:expr)? => $expr:expr),+ $(,)?
+            }
+        )*
+        else $else:ident $else_block:block
+        after $timeout:expr => $timeout_block:expr $(,)?
+    } => {{
+        let msg = $crate::global::recv_matching(Some($timeout), |_| true).await;
+
+        match msg {
+            Ok(msg) => {
+                if false { unreachable!() }
+                $(
+                    else if msg.is::<$ty>() {
+                        let msg = msg.downcast::<$ty>().unwrap();
+                        match *msg {
+                            $(
+                                $pat $(if $guard)? => $expr,
+                            )+
+                            #[allow(unreachable_patterns)]
+                            _ => unreachable!(),
+                        }
+                    }
+                )*
+                else {
+                    let $else = msg;
+                    $else_block
+                }
+            },
+            Err(_) => {
+                $timeout_block
+            },
+        }
+    }};
+
+    {
+        $(
+            match $ty:ty {
+                $($pat:pat $(if $guard:expr)? => $expr:expr),+ $(,)?
+            }
+        )*
+        else $else_block:block
+        after $timeout:expr => $timeout_block:expr $(,)?
+    } => {{
+        let msg = $crate::global::recv_matching(Some($timeout), |_| true).await;
+
+        match msg {
+            Ok(msg) => {
+                if false { unreachable!() }
+                $(
+                    else if msg.is::<$ty>() {
+                        let msg = msg.downcast::<$ty>().unwrap();
+                        match *msg {
+                            $(
+                                $pat $(if $guard)? => $expr,
+                            )+
+                            #[allow(unreachable_patterns)]
+                            _ => unreachable!(),
+                        }
+                    }
+                )*
+                else {
+                    $else_block
+                }
+            },
+            Err(_) => {
+                $timeout_block
+            },
+        }
+    }};
+
+    {
+        $(
+            match $ty:ty {
+                $($pat:pat $(if $guard:expr)? => $expr:expr),+ $(,)?
+            }
+        )*
+        after $timeout:expr => $timeout_block:expr $(,)?
+    } => {{
+        let msg = $crate::global::recv_matching(Some($timeout), |msg| {
+            $(
+                if let Some(msg) = msg.downcast_ref::<$ty>() {
+                    match msg {
+                        $(
+                            #[allow(unused_variables)]
+                            $pat $(if $guard)? => return true,
+                        )+
+                        #[allow(unreachable_patterns)]
+                        _ => (),
+                    }
+                }
+
+            )*
+
+            false
+        }).await;
+
+        match msg {
+            Ok(msg) => {
+                if false { unreachable!() }
+                $(
+                    else if msg.is::<$ty>() {
+                        let msg = msg.downcast::<$ty>().unwrap();
+                        match *msg {
+                            $(
+                                $pat $(if $guard)? => $expr,
+                            )+
+                            #[allow(unreachable_patterns)]
+                            _ => unreachable!(),
+                        }
+                    }
+                )*
+                else { unreachable!() }
+            },
+            Err(_) => {
+                $timeout_block
             },
         }
     }};

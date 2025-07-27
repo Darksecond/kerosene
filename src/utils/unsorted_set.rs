@@ -1,3 +1,4 @@
+#[derive(Clone, Debug)]
 pub struct UnsortedSet<T, const N: usize> {
     data: [Option<T>; N],
     len: usize,
