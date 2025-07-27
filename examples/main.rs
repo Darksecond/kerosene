@@ -35,24 +35,28 @@ async fn main_actor() -> Exit {
     }
 
     loop {
-        receive!({
-            match (): _ => {
-                println!("MainActor::handle");
+        receive! {
+            match () {
+                _ => {
+                    println!("MainActor::handle");
 
-                let _ = global::send(child, String::from("Timer!"));
-                global::schedule(global::pid(), (), Duration::from_secs(1));
+                    let _ = global::send(child, String::from("Timer!"));
+                    global::schedule(global::pid(), (), Duration::from_secs(1));
+                }
             }
-        });
+        }
     }
 }
 
 async fn my_actor() -> Exit {
     loop {
-        receive!({
-            match String: message => {
-                println!("Received message: {} at {:?}", message, Instant::now());
+        receive! {
+            match String {
+                message => {
+                    println!("Received message: {} at {:?}", message, Instant::now());
+                }
             }
-        });
+        }
     }
 }
 
@@ -67,11 +71,13 @@ async fn blocking_actor() -> Exit {
 async fn idle_loop_actor() -> Exit {
     let _ = global::send(global::pid(), ());
     loop {
-        receive!({
-            match (): _ => {
-                let _ = global::send(global::pid(), ());
+        receive! {
+            match () {
+                _ => {
+                    let _ = global::send(global::pid(), ());
+                }
             }
-        });
+        }
     }
 }
 
@@ -81,14 +87,16 @@ async fn receiver() -> Exit {
     println!("Receiver started");
 
     loop {
-        receive!({
-            match String: _ => {
-                count += 1;
-                if count % 512 == 0 {
-                    println!("Received {} messages", count);
+        receive! {
+            match String {
+                _message => {
+                    count += 1;
+                    if count % 512 == 0 {
+                        println!("Received {} messages", count);
+                    }
                 }
             }
-        });
+        }
     }
 }
 
@@ -108,11 +116,13 @@ async fn stop_actor() -> Exit {
 
     global::schedule(global::pid(), (), Duration::from_secs(30));
 
-    receive!({
-        match (): _ => {
-            eprintln!("StopActor::handle");
+    receive! {
+        match () {
+            _ => {
+                eprintln!("StopActor::handle");
+            }
         }
-    });
+    };
 
     Exit::Shutdown
 }

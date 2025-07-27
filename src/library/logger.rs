@@ -18,7 +18,7 @@ use std::{fmt::Display, panic::Location};
 use crate::{
     Exit, Pid, PortPid,
     global::{pid, send},
-    receive_new,
+    receive,
     utils::{Timestamp, UnsortedSet},
 };
 
@@ -260,7 +260,7 @@ pub fn emergency(message: &'static str) -> LogBuilder {
 /// This should be registered as 'betterlogger'.
 pub async fn logger_actor() -> Exit {
     loop {
-        let message = receive_new! {
+        let message = receive! {
             match LogMessage {
                 m => m,
             }

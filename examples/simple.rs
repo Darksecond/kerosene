@@ -27,17 +27,19 @@ async fn receiver() -> Exit {
     println!("Receiver started");
 
     loop {
-        receive!({
-            match String: _ => {
-                count += 1;
-                if count % 16 == 0 {
-                    println!("Received {} messages", count);
-                }
-                if count == 128 {
-                    stop();
+        receive! {
+            match String {
+                _ => {
+                    count += 1;
+                    if count % 16 == 0 {
+                        println!("Received {} messages", count);
+                    }
+                    if count == 128 {
+                        stop();
+                    }
                 }
             }
-        });
+        }
     }
 }
 

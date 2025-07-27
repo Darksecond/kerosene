@@ -11,9 +11,11 @@ async fn receive_actor() -> Exit {
     let mut count = 0;
     let now = Instant::now();
     loop {
-        receive!({
-            match i32: _ => { count += 1;}
-        });
+        receive! {
+            match i32 {
+                _ => { count += 1; }
+            }
+        };
         if count == 100000 {
             measure(now.elapsed());
             stop();

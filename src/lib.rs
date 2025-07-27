@@ -41,15 +41,17 @@ where
         global::schedule(global::pid(), (), Duration::from_millis(10));
 
         loop {
-            receive!({
-                match (): _ => {
-                    info("System started").emit();
+            receive! {
+                match () {
+                    _ => {
+                        info("System started").emit();
 
-                    if let Some(actor) = actor.take() {
-                        global::spawn_linked(actor);
+                        if let Some(actor) = actor.take() {
+                            global::spawn_linked(actor);
+                        }
                     }
                 }
-            });
+            }
         }
     }
 }

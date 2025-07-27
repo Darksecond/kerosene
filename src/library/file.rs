@@ -105,25 +105,27 @@ pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, Error> {
 
     global::send_port(port, FileRequest::Open { path });
 
-    receive!({
-        match FileReply: FileReply::Opened => {},
-        match FileReply: FileReply::Error(error) => {
-            return Err(error)
+    receive! {
+        match FileReply {
+            FileReply::Opened => {},
+            FileReply::Error(error) => {
+                return Err(error)
+            }
         }
-    });
+    }
 
     global::send_port(port, FileRequest::ReadString);
 
-    receive!({
-        match FileReply: FileReply::ReadString(string) => {
-            global::close_port(port);
-            return Ok(string)
-        },
-        match FileReply: FileReply::Error(error) => {
-            global::close_port(port);
-            return Err(error)
+    receive! {
+        match FileReply {
+            FileReply::ReadString(string) => {
+                global::close_port(port);
+                return Ok(string)
+            },
+            FileReply::Error(error) => {
+                global::close_port(port);
+                return Err(error)
+            }
         }
-    });
-
-    Err(Error::new(ErrorKind::Other, "Unexpected error"))
+    }
 }

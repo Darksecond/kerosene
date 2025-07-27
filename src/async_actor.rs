@@ -56,25 +56,31 @@ where
         }
 
         loop {
-            receive!({
-                match TrapExitMessage: TrapExitMessage { pid, reason } => {
-                    if let Some(exit) = actor.on_exit(pid, reason).await
-                    {
-                        return exit;
-                    }
-                },
-                match TrapPortExitMessage: TrapPortExitMessage { port, reason } => {
-                    if let Some(exit) = actor.on_port_exit(port, reason).await
-                    {
-                        return exit;
-                    }
-                },
-                match A::Message: message => {
-                    if let Some(exit) = actor.handle(message).await {
-                        return exit;
+            receive! {
+                match TrapExitMessage {
+                    TrapExitMessage { pid, reason } => {
+                        if let Some(exit) = actor.on_exit(pid, reason).await {
+                            return exit;
+                        }
                     }
                 }
-            });
+
+                match TrapPortExitMessage {
+                    TrapPortExitMessage { port, reason } => {
+                        if let Some(exit) = actor.on_port_exit(port, reason).await {
+                            return exit;
+                        }
+                    }
+                }
+
+                match A::Message {
+                    message => {
+                        if let Some(exit) = actor.handle(message).await {
+                            return exit;
+                        }
+                    }
+                }
+            }
         }
     }
 }
