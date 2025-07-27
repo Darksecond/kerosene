@@ -16,7 +16,18 @@ where
         }
     }
 
-    // If the item isn't already in the set, add it.
+    /// Merge another set into this one.
+    ///
+    /// This will override any existing items in this set with items from the other set.
+    pub fn merge_with<const M: usize>(&mut self, other: UnsortedSet<T, M>) {
+        for item in other.into_iter() {
+            self.insert(item);
+        }
+    }
+
+    /// If the item isn't already in the set, add it.
+    ///
+    /// Returns `true` if the item was added, `false` if it was already in the set.
     pub fn insert(&mut self, value: T) -> bool {
         if self.contains(&value) {
             return false;
@@ -39,6 +50,9 @@ where
         true
     }
 
+    /// Remove an item from the set.
+    ///
+    /// Returns `true` if the item was removed, `false` if it was not in the set.
     pub fn remove(&mut self, value: &T) -> bool {
         for i in 0..self.len {
             if let Some(data) = &self.data[i] {
@@ -93,5 +107,12 @@ where
             .iter()
             .filter_map(|item| item.as_ref())
             .chain(self.overflow.iter())
+    }
+
+    pub fn into_iter(self) -> impl Iterator<Item = T> {
+        self.data
+            .into_iter()
+            .filter_map(|item| item)
+            .chain(self.overflow.into_iter())
     }
 }

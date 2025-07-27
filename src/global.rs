@@ -19,7 +19,6 @@ use crate::{
     registry::Registry,
     scheduler::Scheduler,
     timer::Timer,
-    utils::pending_once,
 };
 
 thread_local! {
@@ -105,16 +104,29 @@ pub fn trap_exit(should_trap: bool) {
 /// Sleeps for a given duration
 ///
 /// This will spend 1 budget unit.
-pub async fn sleep(duration: Duration) {
+pub fn sleep(duration: Duration) -> impl Future<Output = ()> {
+    struct Sleep(Instant, Duration);
+
+    impl Future for Sleep {
+        type Output = ();
+
+        fn poll(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            while self.0.elapsed() < self.1 {
+                return std::task::Poll::Pending;
+            }
+            std::task::Poll::Ready(())
+        }
+    }
+
     // We don't use yield_now here because we're already going to sleep.
     context_mut().budget += 1;
-
     context().timer.wake_up(pid(), duration);
     let now = Instant::now();
 
-    while now.elapsed() < duration {
-        pending_once().await;
-    }
+    Sleep(now, duration)
 }
 
 /// Sends a signal to an actor.
