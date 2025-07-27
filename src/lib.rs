@@ -3,7 +3,7 @@ use std::{num::NonZero, sync::Arc, time::Duration};
 use crate::{
     actor::{ActorControlBlock, HydratedActor},
     library::{
-        logger::{Logger, logger_actor},
+        logger::{info, logger_actor},
         supervisor::{RestartPolicy, Strategy, Supervisor},
     },
     registry::Registry,
@@ -36,14 +36,14 @@ where
         let mut actor = Some(actor);
         let supervisor = Supervisor::spawn_linked(Strategy::OneForOne);
 
-        supervisor.supervise_named("global_logger", RestartPolicy::Permanent, || logger_actor);
+        supervisor.supervise_named("logger", RestartPolicy::Permanent, || logger_actor);
 
         global::schedule(global::pid(), (), Duration::from_millis(10));
 
         loop {
             receive!({
                 match (): _ => {
-                    Logger::global().debug("System started");
+                    info("System started").emit();
 
                     if let Some(actor) = actor.take() {
                         global::spawn_linked(actor);

@@ -44,7 +44,7 @@ impl<'a> GlobalContext<'a> {
     }
 
     #[inline]
-    pub fn ports(&self) -> &mut PortTable {
+    pub fn ports(&mut self) -> &mut PortTable {
         unsafe { &mut *self.ports }
     }
 }
@@ -114,10 +114,11 @@ pub fn sleep(duration: Duration) -> impl Future<Output = ()> {
             self: Pin<&mut Self>,
             _cx: &mut std::task::Context<'_>,
         ) -> std::task::Poll<Self::Output> {
-            while self.0.elapsed() < self.1 {
-                return std::task::Poll::Pending;
+            if self.0.elapsed() < self.1 {
+                std::task::Poll::Pending
+            } else {
+                std::task::Poll::Ready(())
             }
-            std::task::Poll::Ready(())
         }
     }
 
@@ -234,28 +235,30 @@ pub fn create_port<P>(port: P) -> PortRef<P>
 where
     P: Port,
 {
-    let context = context();
-    let port = context.ports().create(
-        context.scheduler.clone(),
-        context.registry.clone(),
-        context.pid(),
+    let pid = pid();
+    let port = context_mut().ports().create(
+        context().scheduler.clone(),
+        context().registry.clone(),
+        pid,
         port,
     );
 
     // TODO: Introduce port signals
-    context.ports().get_mut(port.port_pid()).unwrap().start();
+    context_mut()
+        .ports()
+        .get_mut(port.port_pid())
+        .unwrap()
+        .start();
 
-    context.actor.ports().insert(port.port_pid());
+    context().actor.ports().insert(port.port_pid());
 
     port
 }
 
 pub fn close_port(port: impl Into<PortPid>) {
     let port = port.into();
-    let context = context();
-
-    context.ports().close(port, Exit::Normal);
-    context.actor.ports().remove(&port);
+    context_mut().ports().close(port, Exit::Normal);
+    context().actor.ports().remove(&port);
 }
 
 pub fn send_port<P>(port: PortRef<P>, message: P::Message)
