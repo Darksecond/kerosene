@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Error, ErrorKind, Read},
+    io::{Error, Read},
     path::PathBuf,
     sync::{
         Arc,
@@ -9,18 +9,22 @@ use std::{
 };
 
 use crate::{
-    global,
+    Exit, global,
     port::{Port, PortContext},
     receive,
 };
 
 pub struct FilePort {
+    path: PathBuf,
     tx: Option<Sender<FileRequest>>,
 }
 
 impl FilePort {
-    pub fn new() -> Self {
-        FilePort { tx: None }
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        FilePort {
+            path: path.into(),
+            tx: None,
+        }
     }
 }
 
@@ -32,41 +36,28 @@ impl Port for FilePort {
         let (tx, rx) = channel();
         self.tx = Some(tx);
 
+        let path = self.path.clone();
         std::thread::spawn(move || {
-            let mut file: Option<File> = None;
+            let mut file = match File::open(path) {
+                Ok(file) => file,
+                Err(err) => {
+                    ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                    return;
+                }
+            };
 
             for msg in rx {
                 match msg {
-                    FileRequest::Open { path } => match File::open(path) {
-                        Ok(f) => {
-                            file = Some(f);
-                            let _ = ctx.send(FileReply::Opened);
-                        }
-                        Err(err) => {
-                            file = None;
-                            let _ = ctx.send(FileReply::Error(err));
-                        }
-                    },
-                    FileRequest::Close => {
-                        file = None;
-                        let _ = ctx.send(FileReply::Closed);
-                    }
                     FileRequest::ReadString => {
-                        if let Some(file) = file.as_mut() {
-                            let mut buffer = String::new();
-                            match file.read_to_string(&mut buffer) {
-                                Ok(_) => {
-                                    let _ = ctx.send(FileReply::ReadString(buffer));
-                                }
-                                Err(err) => {
-                                    let _ = ctx.send(FileReply::Error(err));
-                                }
+                        let mut buffer = String::new();
+                        match file.read_to_string(&mut buffer) {
+                            Ok(_) => {
+                                let _ = ctx.send(FileReply::ReadString(buffer));
                             }
-                        } else {
-                            let _ = ctx.send(FileReply::Error(Error::new(
-                                ErrorKind::Other,
-                                "File not opened",
-                            )));
+                            Err(err) => {
+                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                return;
+                            }
                         }
                     }
                 }
@@ -86,33 +77,16 @@ impl Port for FilePort {
 }
 
 pub enum FileRequest {
-    Open { path: PathBuf },
-    Close,
     ReadString,
 }
 
 pub enum FileReply {
-    Opened,
-    Closed,
-    Error(Error),
     ReadString(String),
 }
 
 // This should probably use an actor interally.
 pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, Error> {
-    let path = path.into();
-    let port = global::create_port(FilePort::new());
-
-    global::send_port(port, FileRequest::Open { path });
-
-    receive! {
-        match FileReply {
-            FileReply::Opened => {},
-            FileReply::Error(error) => {
-                return Err(error)
-            }
-        }
-    }
+    let port = global::create_port(FilePort::new(path));
 
     global::send_port(port, FileRequest::ReadString);
 
@@ -122,10 +96,6 @@ pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, Error> {
                 global::close_port(port);
                 return Ok(string)
             },
-            FileReply::Error(error) => {
-                global::close_port(port);
-                return Err(error)
-            }
         }
     }
 }

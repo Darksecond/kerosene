@@ -159,7 +159,7 @@ pub enum Exit {
     /// Actor was killed intentionally (e.g. supervisor or monitor)
     Killed,
 
-    Io(io::ErrorKind),
+    Io(String, io::ErrorKind),
 }
 
 pub enum Signal {
