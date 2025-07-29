@@ -5,12 +5,14 @@ use std::sync::{
 
 use crate::{
     actor::Pid,
+    metadata::MetaKeyValue,
     port::PortPid,
     utils::{CachePadded, UnsortedSet},
     worker::WorkerId,
 };
 
 pub const MAX_LINKS: usize = 32;
+pub const MAX_META_KV: usize = 4;
 
 pub struct ActorControlBlock {
     pub pid: Pid,
@@ -20,6 +22,7 @@ pub struct ActorControlBlock {
     pub worker_id: AtomicU64,
     pub(crate) links: Mutex<UnsortedSet<Pid, MAX_LINKS>>,
     pub(crate) ports: Mutex<UnsortedSet<PortPid, MAX_LINKS>>,
+    pub(crate) metadata: Mutex<UnsortedSet<MetaKeyValue, MAX_META_KV>>,
 }
 
 impl ActorControlBlock {
@@ -32,6 +35,7 @@ impl ActorControlBlock {
             worker_id: AtomicU64::new(worker_id as _),
             links: Mutex::new(UnsortedSet::new()),
             ports: Mutex::new(UnsortedSet::new()),
+            metadata: Mutex::new(UnsortedSet::new()),
         }
     }
 

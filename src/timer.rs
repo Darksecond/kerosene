@@ -1,20 +1,21 @@
 use std::{
     collections::BinaryHeap,
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use crate::{
     actor::{Pid, Signal},
-    registry::Registry,
-    scheduler::Scheduler,
+    system::System,
 };
 
 pub struct Timer {
+    is_running: AtomicBool,
     entries: Mutex<BinaryHeap<Entry>>,
     cond: Condvar,
-    scheduler: Arc<Scheduler>,
-    registry: Arc<Registry>,
 }
 
 struct Entry {
@@ -46,13 +47,17 @@ impl PartialOrd for Entry {
 }
 
 impl Timer {
-    pub fn new(scheduler: Arc<Scheduler>, registry: Arc<Registry>) -> Self {
+    pub fn new() -> Self {
         Timer {
+            is_running: AtomicBool::new(true),
             entries: Mutex::new(BinaryHeap::new()),
             cond: Condvar::new(),
-            scheduler,
-            registry,
         }
+    }
+
+    pub fn stop(&self) {
+        self.is_running.store(false, Ordering::SeqCst);
+        self.cond.notify_one();
     }
 
     pub fn wake_up(&self, pid: Pid, duration: Duration) {
@@ -80,18 +85,18 @@ impl Timer {
         self.cond.notify_one(); // Wake timer thread if sleeping
     }
 
-    pub fn run(&self) {
+    pub fn run(&self, system: Arc<System>) {
         let mut entries = self.entries.lock().expect("Failed to acquire lock");
-        loop {
+        while self.is_running.load(Ordering::Relaxed) {
             while let Some(entry) = entries.peek() {
                 let now = Instant::now();
 
                 if entry.expire_at <= now {
                     let entry = entries.pop().unwrap();
-                    self.scheduler.schedule(entry.pid);
-                    if let Some(actor) = self.registry.lookup_pid(entry.pid) {
+                    system.scheduler.schedule(entry.pid);
+                    if let Some(actor) = system.registry.lookup_pid(entry.pid) {
                         let _ = actor.send_signal(entry.message);
-                        self.scheduler.schedule(entry.pid);
+                        system.scheduler.schedule(entry.pid);
                     }
 
                     continue;

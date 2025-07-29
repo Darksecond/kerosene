@@ -1,9 +1,6 @@
-use std::{
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use crate::{
@@ -24,7 +21,6 @@ pub struct Scheduler {
     count: AtomicUsize,
     pub(crate) workers: [RwLock<Slot>; 128],
     registry: Arc<Registry>,
-    pub epoch: Instant,
     pub(crate) stopped: AtomicBool,
     is_balancing: AtomicBool,
 }
@@ -35,7 +31,6 @@ impl Scheduler {
             count: AtomicUsize::new(0),
             workers: std::array::from_fn(|_| RwLock::new(Slot::Empty)),
             registry,
-            epoch: Instant::now(),
             stopped: AtomicBool::new(false),
             is_balancing: AtomicBool::new(false),
         }
@@ -85,22 +80,7 @@ impl Scheduler {
             self.stop(worker_id);
         }
 
-        self.registry.remove_all();
-
         self.stopped.store(true, Ordering::Release);
-
-        // TODO Stop the timer.
-    }
-
-    // TODO: Rewrite this.
-    pub fn wait_all(&self) {
-        loop {
-            let count = self.count.load(Ordering::Acquire);
-            if count == 0 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
     }
 
     fn stop(&self, worker_id: WorkerId) {

@@ -1,4 +1,5 @@
 //! The logger system is modeled on erlang's logger system.
+//!
 //! See <https://www.erlang.org/doc/apps/kernel/logger.html>.
 //!
 //! You can start a log message by using one of the helper methods, or by using `Logbuilder::new` directly.
@@ -16,14 +17,15 @@
 use std::{fmt::Display, panic::Location};
 
 use crate::{
-    Exit, Pid, PortPid,
-    global::{pid, register, send},
+    Exit,
+    global::{metadata, pid, register, send},
+    metadata::{MetaKeyValue, MetaValue},
     receive,
     utils::{Timestamp, UnsortedSet},
 };
 
 enum LogMessage {
-    Log(Log),
+    Log(Record),
 }
 
 /// The severity of the log message.
@@ -54,76 +56,11 @@ impl Display for Level {
     }
 }
 
-/// Various types that are supported as metadata.
-#[derive(Clone, Debug, PartialEq)]
-pub enum MetaValue {
-    OwnedString(String),
-    StaticStr(&'static str),
-
-    Unsigned(u64),
-    Signed(i64),
-
-    Pid(Pid),
-    Port(PortPid),
-
-    Timestamp(Timestamp),
-}
-
-impl Display for MetaValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MetaValue::OwnedString(str) => write!(f, "{}", str),
-            MetaValue::StaticStr(str) => write!(f, "{}", str),
-            MetaValue::Unsigned(num) => write!(f, "{}", num),
-            MetaValue::Signed(num) => write!(f, "{}", num),
-            MetaValue::Pid(pid) => write!(f, "{}", pid.0),
-            MetaValue::Port(port_pid) => write!(f, "{:?}", port_pid),
-            MetaValue::Timestamp(timestamp) => write!(f, "{}", timestamp),
-        }
-    }
-}
-
-impl From<&'static str> for MetaValue {
-    fn from(value: &'static str) -> Self {
-        MetaValue::StaticStr(value)
-    }
-}
-
-impl From<u32> for MetaValue {
-    fn from(value: u32) -> Self {
-        MetaValue::Unsigned(value as u64)
-    }
-}
-
-impl From<Pid> for MetaValue {
-    fn from(value: Pid) -> Self {
-        MetaValue::Pid(value)
-    }
-}
-
-impl From<Timestamp> for MetaValue {
-    fn from(value: Timestamp) -> Self {
-        MetaValue::Timestamp(value)
-    }
-}
-
 #[derive(Clone, Debug)]
-struct MetaData {
-    key: &'static str,
-    value: MetaValue,
-}
-
-impl PartialEq for MetaData {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-    }
-}
-
-#[derive(Clone, Debug)]
-struct Log {
+struct Record {
     level: Level,
     message: &'static str, // TODO: Should probably be CoW
-    values: UnsortedSet<MetaData, 16>,
+    values: UnsortedSet<MetaKeyValue, 16>,
 }
 
 /// Allows building a log message with metadata.
@@ -132,7 +69,7 @@ pub struct LogBuilder {
     logger: &'static str,
     level: Level,
     message: &'static str,
-    values: UnsortedSet<MetaData, 16>,
+    values: UnsortedSet<MetaKeyValue, 16>,
     location: &'static Location<'static>,
 }
 
@@ -147,18 +84,23 @@ impl LogBuilder {
         level: Level,
         message: &'static str,
     ) -> Self {
+        let mut values = UnsortedSet::new();
+
+        // Insert metadata from the actor
+        values.merge_with(metadata());
+
         LogBuilder {
             logger: "logger",
             level,
             message,
-            values: UnsortedSet::new(),
+            values,
             location,
         }
     }
 
     /// Add metadata to the log message
     pub fn with(mut self, key: &'static str, value: impl Into<MetaValue>) -> Self {
-        let meta = MetaData {
+        let meta = MetaKeyValue {
             key,
             value: value.into(),
         };
@@ -177,27 +119,27 @@ impl LogBuilder {
         let location = self.location;
         let mut values = self.values;
 
-        values.insert(MetaData {
+        values.insert(MetaKeyValue {
             key: "time",
             value: Timestamp::now().into(),
         });
 
-        values.insert(MetaData {
+        values.insert(MetaKeyValue {
             key: "pid",
             value: pid().into(),
         });
 
-        values.insert(MetaData {
+        values.insert(MetaKeyValue {
             key: "file",
             value: location.file().into(),
         });
 
-        values.insert(MetaData {
+        values.insert(MetaKeyValue {
             key: "line",
             value: location.line().into(),
         });
 
-        let log = Log {
+        let log = Record {
             level: self.level,
             message: self.message,
             values,
@@ -258,7 +200,7 @@ pub fn emergency(message: &'static str) -> LogBuilder {
 /// The Logger actor.
 ///
 /// This should be registered as 'betterlogger'.
-pub async fn logger_actor() -> Exit {
+pub(crate) async fn logger_actor() -> Exit {
     register("logger", pid());
 
     loop {
@@ -279,13 +221,13 @@ pub async fn logger_actor() -> Exit {
 
 fn find_key<'a, const N: usize>(
     key: &str,
-    values: &'a UnsortedSet<MetaData, N>,
-) -> Option<&'a MetaData> {
+    values: &'a UnsortedSet<MetaKeyValue, N>,
+) -> Option<&'a MetaKeyValue> {
     values.iter().find(|meta| meta.key == key)
 }
 
 // TODO: Rewrite this to be less spaghetti
-fn parse<const N: usize>(msg: &'static str, values: &UnsortedSet<MetaData, N>) -> String {
+fn parse<const N: usize>(msg: &'static str, values: &UnsortedSet<MetaKeyValue, N>) -> String {
     let mut result = String::with_capacity(msg.len());
     let mut chars = msg.char_indices().peekable();
 
@@ -345,15 +287,16 @@ fn parse<const N: usize>(msg: &'static str, values: &UnsortedSet<MetaData, N>) -
 
 #[cfg(test)]
 mod tests {
-    use super::{MetaData, parse};
     use crate::utils::UnsortedSet;
+
+    use super::{MetaKeyValue, parse};
 
     #[test]
     fn test_parse() {
         let msg = "Hello {name} {last_name} {name}!";
 
-        let mut values = UnsortedSet::<_, 16>::new();
-        values.insert(MetaData {
+        let mut values = UnsortedSet::<MetaKeyValue, 16>::new();
+        values.insert(MetaKeyValue {
             key: "name",
             value: "John".into(),
         });

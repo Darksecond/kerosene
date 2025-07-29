@@ -1,4 +1,4 @@
-use std::{num::NonZero, sync::Arc, time::Duration};
+use std::{num::NonZero, sync::Arc, thread::JoinHandle, time::Duration};
 
 use crate::{
     actor::{ActorControlBlock, HydratedActor},
@@ -6,9 +6,7 @@ use crate::{
         logger::{info, logger_actor},
         supervisor::{RestartPolicy, Strategy, Supervisor},
     },
-    registry::Registry,
-    scheduler::Scheduler,
-    timer::Timer,
+    system::System,
     worker::{ActiveWorker, Worker},
 };
 
@@ -16,10 +14,12 @@ mod actor;
 mod async_actor;
 pub mod global;
 pub mod library;
+mod metadata;
 mod migration;
 mod port;
 mod registry;
 mod scheduler;
+mod system;
 mod timer;
 mod utils;
 mod worker;
@@ -56,68 +56,70 @@ where
     }
 }
 
-fn start_worker(registry: Arc<Registry>, scheduler: Arc<Scheduler>, timer: Arc<Timer>) {
-    let id = scheduler.allocate_slot();
+fn start_worker(system: Arc<System>) -> JoinHandle<()> {
+    let id = system.scheduler.allocate_slot();
 
     let worker = Arc::new(Worker::new(id));
 
     let handle = {
         let worker = worker.clone();
-        let scheduler = scheduler.clone();
 
+        let system = system.clone();
         std::thread::spawn(move || {
-            worker.run(registry, scheduler, timer);
+            worker.run(system.clone());
         })
     };
 
-    let _ = scheduler.replace_slot(
+    let _ = system.scheduler.replace_slot(
         id,
         ActiveWorker {
             thread: handle.thread().clone(),
-            handle: Some(handle),
             worker,
         },
     );
+
+    handle
 }
 
 pub fn run<A>(entry_point: A)
 where
     A: IntoAsyncActor,
 {
-    let registry = Arc::new(Registry::new());
-    let scheduler = Arc::new(Scheduler::new(registry.clone()));
-    let timer = Arc::new(Timer::new(scheduler.clone(), registry.clone()));
+    let system = System::new();
 
-    {
+    let handles = {
         let cores = std::thread::available_parallelism()
             .map(NonZero::get)
             .unwrap_or(1);
 
-        for _ in 0..cores {
-            start_worker(registry.clone(), scheduler.clone(), timer.clone());
-        }
-    }
+        (0..cores)
+            .map(|_| start_worker(system.clone()))
+            .collect::<Vec<_>>()
+    };
 
     {
-        let pid = registry.allocate_pid();
+        let pid = system.registry.allocate_pid();
 
         let control_block = ActorControlBlock::new(pid, 0);
 
-        let actor = HydratedActor::new(&scheduler, control_block, main_actor(entry_point));
+        let actor = HydratedActor::new(&system.scheduler, control_block, main_actor(entry_point));
 
-        registry.add(actor);
+        system.registry.add(actor);
 
-        scheduler.schedule(pid);
+        system.scheduler.schedule(pid);
     }
 
-    {
-        let timer = timer.clone();
+    let timer_handle = {
+        let timer = system.timer.clone();
         std::thread::spawn(move || {
-            timer.run();
-        });
-    }
+            timer.run(system.clone());
+        })
+    };
 
-    scheduler.wait_all();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    timer_handle.join().unwrap();
 }
 
 #[macro_export]

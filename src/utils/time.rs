@@ -16,6 +16,7 @@ pub struct Timestamp {
 impl Timestamp {
     pub fn now() -> Self {
         let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
         let mut secs = duration.as_secs();
 
         let mut year = 1970;

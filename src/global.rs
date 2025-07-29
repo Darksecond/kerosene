@@ -8,17 +8,19 @@ use std::{
     cell::Cell,
     marker::PhantomData,
     pin::Pin,
-    sync::{Arc, atomic::Ordering},
+    sync::{Arc, Mutex, atomic::Ordering},
     time::{Duration, Instant},
 };
 
 use crate::{
-    actor::{ActorControlBlock, Exit, HydratedActor, HydratedActorBase, Pid, Signal, ToPid},
+    actor::{
+        ActorControlBlock, Exit, HydratedActor, HydratedActorBase, MAX_META_KV, Pid, Signal, ToPid,
+    },
     async_actor::IntoAsyncActor,
+    metadata::{MetaKeyValue, MetaValue},
     port::{Port, PortPid, PortRef, PortTable},
-    registry::Registry,
-    scheduler::Scheduler,
-    timer::Timer,
+    system::System,
+    utils::UnsortedSet,
 };
 
 thread_local! {
@@ -29,9 +31,7 @@ thread_local! {
 pub(crate) struct GlobalContext<'a> {
     pub(crate) budget: usize,
     pub(crate) actor: &'a Pin<Arc<dyn HydratedActorBase>>,
-    pub(crate) registry: &'a Arc<Registry>,
-    pub(crate) scheduler: &'a Arc<Scheduler>,
-    pub(crate) timer: &'a Arc<Timer>,
+    pub(crate) system: &'a Arc<System>,
     pub(crate) ports: *mut PortTable,
 
     pub(crate) _marker: PhantomData<*const ()>,
@@ -77,12 +77,12 @@ pub fn pid() -> Pid {
 
 /// Stops the system
 pub fn stop() {
-    context().scheduler.stop_all();
+    context().system.stop_all();
 }
 
 /// Register a name for an actor
 pub fn register(name: &'static str, actor: Pid) {
-    context().registry.register(name, actor);
+    context().system.registry.register(name, actor);
 }
 
 /// Traps the exit signal
@@ -124,7 +124,7 @@ pub fn sleep(duration: Duration) -> impl Future<Output = ()> {
 
     // We don't use yield_now here because we're already going to sleep.
     context_mut().budget += 1;
-    context().timer.wake_up(pid(), duration);
+    context().system.timer.wake_up(pid(), duration);
     let now = Instant::now();
 
     Sleep(now, duration)
@@ -136,9 +136,9 @@ pub fn sleep(duration: Duration) -> impl Future<Output = ()> {
 pub fn send_signal(to: Pid, message: Signal) {
     let context = context();
 
-    if let Some(actor) = context.registry.lookup_pid(to) {
+    if let Some(actor) = context.system.registry.lookup_pid(to) {
         actor.send_signal(message);
-        context.scheduler.schedule(to);
+        context.system.scheduler.schedule(to);
     }
 }
 
@@ -149,7 +149,7 @@ pub fn schedule<T>(to: Pid, message: T, delay: Duration)
 where
     T: Send + 'static,
 {
-    context().timer.add(to, delay, message);
+    context().system.timer.add(to, delay, message);
 }
 
 /// Send a message to an actor.
@@ -163,11 +163,11 @@ where
     let context = context();
     let message = Signal::Message(Box::new(message));
 
-    let pid = to.to_reference(&context.registry);
+    let pid = to.to_reference(&context.system.registry);
 
-    if let Some(actor) = context.registry.lookup_pid(pid) {
+    if let Some(actor) = context.system.registry.lookup_pid(pid) {
         actor.send_signal(message);
-        context.scheduler.schedule(pid);
+        context.system.scheduler.schedule(pid);
     }
 }
 
@@ -180,7 +180,7 @@ where
     B: IntoAsyncActor,
 {
     let context = context();
-    let pid = context.registry.allocate_pid();
+    let pid = context.system.registry.allocate_pid();
 
     let spawn_at = context
         .actor
@@ -188,13 +188,14 @@ where
         .worker_id
         .load(Ordering::Acquire) as _;
 
-    let control_block = ActorControlBlock::new(pid, spawn_at);
+    let mut control_block = ActorControlBlock::new(pid, spawn_at);
+    control_block.metadata = Mutex::new(context.actor.metadata().clone());
 
-    let actor = HydratedActor::new(context.scheduler, control_block, behavior);
+    let actor = HydratedActor::new(&context.system.scheduler, control_block, behavior);
 
-    context.registry.add(actor);
+    context.system.registry.add(actor);
 
-    context.scheduler.schedule(pid);
+    context.system.scheduler.schedule(pid);
 
     pid
 }
@@ -208,7 +209,7 @@ where
 {
     let context = context();
     let pid = context.pid();
-    let new_pid = context.registry.allocate_pid();
+    let new_pid = context.system.registry.allocate_pid();
 
     let spawn_at = context
         .actor
@@ -216,17 +217,18 @@ where
         .worker_id
         .load(Ordering::Acquire) as _;
 
-    let control_block = ActorControlBlock::new(new_pid, spawn_at);
+    let mut control_block = ActorControlBlock::new(new_pid, spawn_at);
+    control_block.metadata = Mutex::new(context.actor.metadata().clone());
 
     let _ = control_block.add_link(pid);
 
-    let actor = HydratedActor::new(context.scheduler, control_block, behavior);
+    let actor = HydratedActor::new(&context.system.scheduler, control_block, behavior);
 
     let _ = context.actor.control_block().add_link(new_pid);
 
-    context.registry.add(actor);
+    context.system.registry.add(actor);
 
-    context.scheduler.schedule(new_pid);
+    context.system.scheduler.schedule(new_pid);
 
     new_pid
 }
@@ -237,8 +239,8 @@ where
 {
     let pid = pid();
     let port = context_mut().ports().create(
-        context().scheduler.clone(),
-        context().registry.clone(),
+        context().system.scheduler.clone(),
+        context().system.registry.clone(),
         pid,
         port,
     );
@@ -268,9 +270,10 @@ where
     let context = context();
 
     context
+        .system
         .registry
         .ports
-        .send(context.scheduler, port, message);
+        .send(&context.system.scheduler, port, message);
 }
 
 /// Yield the current actor if the budget is spent.
@@ -295,7 +298,7 @@ pub fn yield_now(budget: usize) -> impl Future<Output = ()> {
         ) -> std::task::Poll<Self::Output> {
             if context().budget >= MAX_BUDGET {
                 context_mut().budget = 0;
-                context().scheduler.schedule(pid());
+                context().system.scheduler.schedule(pid());
 
                 std::task::Poll::Pending
             } else {
@@ -307,6 +310,19 @@ pub fn yield_now(budget: usize) -> impl Future<Output = ()> {
     context_mut().budget += budget;
 
     YieldNow
+}
+
+/// Insert or update metadata for the current actor.
+pub fn insert_metadata(key: &'static str, value: impl Into<MetaValue>) {
+    context().actor.metadata().insert(MetaKeyValue {
+        key,
+        value: value.into(),
+    });
+}
+
+/// Gets all the metadata for the current actor.
+pub fn metadata() -> UnsortedSet<MetaKeyValue, MAX_META_KV> {
+    context().actor.metadata().clone()
 }
 
 // TODO: We should consider tracking where we are in the message queue and resume from there, since obviously none of the previous messages matched.
@@ -322,7 +338,7 @@ where
     let now = Instant::now();
 
     if let Some(timeout) = timeout {
-        context().timer.wake_up(pid(), timeout);
+        context().system.timer.wake_up(pid(), timeout);
     }
 
     yield_now(0).await;

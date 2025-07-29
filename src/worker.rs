@@ -7,7 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    thread::{JoinHandle, Thread},
+    thread::Thread,
 };
 
 pub use run_queue::RunQueue;
@@ -16,9 +16,7 @@ use crate::{
     actor::{Exit, Pid, Signal},
     migration::Migration,
     port::{PortPid, PortTable},
-    registry::Registry,
-    scheduler::Scheduler,
-    timer::Timer,
+    system::System,
 };
 
 pub type WorkerId = usize;
@@ -26,16 +24,11 @@ pub type WorkerId = usize;
 pub struct ActiveWorker {
     pub worker: Arc<Worker>,
     pub thread: Thread,
-    pub handle: Option<JoinHandle<()>>,
 }
 
 impl ActiveWorker {
-    pub fn new(worker: Arc<Worker>, handle: JoinHandle<()>) -> Self {
-        Self {
-            worker,
-            thread: handle.thread().clone(),
-            handle: Some(handle),
-        }
+    pub fn new(worker: Arc<Worker>, thread: Thread) -> Self {
+        Self { worker, thread }
     }
 }
 
@@ -76,7 +69,7 @@ impl Worker {
         self.run_queue.len()
     }
 
-    pub fn run(&self, registry: Arc<Registry>, scheduler: Arc<Scheduler>, timer: Arc<Timer>) {
+    pub fn run(&self, system: Arc<System>) {
         let ports = UnsafeCell::new(PortTable::new(self.spawn_at));
 
         while self.running.load(Ordering::Relaxed) {
@@ -86,7 +79,7 @@ impl Worker {
             // Try and balance the workers
             if self.reductions.fetch_sub(1, Ordering::Relaxed) == 0 {
                 // Should balance
-                if !scheduler.try_balance(self.spawn_at) {
+                if !system.scheduler.try_balance(self.spawn_at) {
                     self.reductions.store(u64::MAX, Ordering::Relaxed);
                 }
             }
@@ -95,19 +88,19 @@ impl Worker {
             {
                 let parameters = self.migration.load_for_push();
                 if parameters.mode == crate::migration::Mode::Push {
-                    scheduler.try_push(self.spawn_at, parameters);
+                    system.scheduler.try_push(self.spawn_at, parameters);
                 } else if parameters.mode == crate::migration::Mode::Pull {
-                    scheduler.try_pull(self.spawn_at, parameters);
+                    system.scheduler.try_pull(self.spawn_at, parameters);
                 }
             }
 
             if let Some(port) = self.port_run_queue.try_pop() {
                 self.run_ports(unsafe { &mut *ports.get() }, port);
             } else if let Some(pid) = self.run_queue.try_pop() {
-                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer);
-            } else if let Some(pid) = scheduler.try_steal(self.spawn_at) {
+                self.run_actor(ports.get(), pid, &system);
+            } else if let Some(pid) = system.scheduler.try_steal(self.spawn_at) {
                 eprintln!("Worker {} stealing pid {}", self.spawn_at, pid.0);
-                self.run_actor(ports.get(), pid, &registry, &scheduler, &timer);
+                self.run_actor(ports.get(), pid, &system);
             } else {
                 std::thread::park();
             }
@@ -122,15 +115,8 @@ impl Worker {
         }
     }
 
-    fn run_actor(
-        &self,
-        ports: *mut PortTable,
-        pid: Pid,
-        registry: &Arc<Registry>,
-        scheduler: &Arc<Scheduler>,
-        timer: &Arc<Timer>,
-    ) {
-        let actor = match registry.lookup_pid(pid) {
+    fn run_actor(&self, ports: *mut PortTable, pid: Pid, system: &Arc<System>) {
+        let actor = match system.registry.lookup_pid(pid) {
             Some(actor) => actor,
             None => return,
         };
@@ -143,9 +129,7 @@ impl Worker {
         let global_context = UnsafeCell::new(crate::global::GlobalContext {
             budget: 0,
             actor: &actor,
-            registry: &registry,
-            scheduler: &scheduler,
-            timer: &timer,
+            system: &system,
             ports,
             _marker: PhantomData,
         });
@@ -168,17 +152,17 @@ impl Worker {
                 let links = actor.links();
                 let port_links = actor.ports();
 
-                registry.remove(pid);
+                system.registry.remove(pid);
 
                 for port in port_links.iter().copied() {
                     unsafe { &mut *ports }.close(port, Exit::Normal);
                 }
 
                 for linked in links.iter().copied() {
-                    if let Some(child) = registry.lookup_pid(linked) {
+                    if let Some(child) = system.registry.lookup_pid(linked) {
                         child.send_signal(Signal::Exit(pid, exit.clone()));
 
-                        scheduler.schedule(linked);
+                        system.scheduler.schedule(linked);
                     }
                 }
             }

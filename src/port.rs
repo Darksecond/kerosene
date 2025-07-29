@@ -114,7 +114,7 @@ impl PortPid {
         }
     }
 
-    pub const fn worker(&self) -> WorkerId {
+    pub(crate) const fn worker(&self) -> WorkerId {
         self.worker
     }
 }
