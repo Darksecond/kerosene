@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Error, Read},
+    io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
     sync::{
         Arc,
@@ -9,20 +9,23 @@ use std::{
 };
 
 use crate::{
-    Exit, global,
+    Exit,
+    global::{self, send_port},
     port::{Port, PortContext},
     receive,
 };
 
+const CHUNK_SIZE: usize = 4096;
+
 pub struct FilePort {
-    path: PathBuf,
+    path: Option<PathBuf>,
     tx: Option<Sender<FileRequest>>,
 }
 
 impl FilePort {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         FilePort {
-            path: path.into(),
+            path: Some(path.into()),
             tx: None,
         }
     }
@@ -36,7 +39,7 @@ impl Port for FilePort {
         let (tx, rx) = channel();
         self.tx = Some(tx);
 
-        let path = self.path.clone();
+        let path = self.path.take().expect("Path not set");
         std::thread::spawn(move || {
             let mut file = match File::open(path) {
                 Ok(file) => file,
@@ -48,12 +51,42 @@ impl Port for FilePort {
 
             for msg in rx {
                 match msg {
-                    FileRequest::ReadString => {
-                        let mut buffer = String::new();
-                        match file.read_to_string(&mut buffer) {
-                            Ok(_) => {
-                                let _ = ctx.send(FileReply::ReadString(buffer));
+                    FileRequest::Read { offset, len } => {
+                        let len = len.max(CHUNK_SIZE);
+                        let mut data = vec![0; CHUNK_SIZE];
+
+                        match file.seek(SeekFrom::Start(offset)) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                return;
                             }
+                        }
+
+                        match file.read(&mut data[..len]) {
+                            Ok(n) => {
+                                let _ = ctx.send(FileReply::Read {
+                                    len: n,
+                                    data: data.into_boxed_slice(),
+                                });
+                            }
+                            Err(err) => {
+                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                return;
+                            }
+                        }
+                    }
+                    FileRequest::Write { offset, len, data } => {
+                        match file.seek(SeekFrom::Start(offset)) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                return;
+                            }
+                        }
+
+                        match file.write_all(&data[..len]) {
+                            Ok(_) => {}
                             Err(err) => {
                                 ctx.exit(Exit::Io(err.to_string(), err.kind()));
                                 return;
@@ -77,25 +110,58 @@ impl Port for FilePort {
 }
 
 pub enum FileRequest {
-    ReadString,
+    Read {
+        offset: u64,
+        len: usize,
+    },
+    Write {
+        offset: u64,
+        len: usize,
+        data: Box<[u8]>,
+    },
 }
 
 pub enum FileReply {
-    ReadString(String),
+    Write(usize),
+    Read { len: usize, data: Box<[u8]> },
 }
 
-// This should probably use an actor interally.
-pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, Error> {
+pub enum ReadStringError {
+    UnexpectedReply,
+    InvalidUtf8,
+}
+
+pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, ReadStringError> {
     let port = global::create_port(FilePort::new(path));
 
-    global::send_port(port, FileRequest::ReadString);
+    let mut offset = 0;
+    let mut buffer = Vec::new();
 
-    receive! {
-        match FileReply {
-            FileReply::ReadString(string) => {
-                global::close_port(port);
-                return Ok(string)
+    loop {
+        send_port(
+            port,
+            FileRequest::Read {
+                offset: offset,
+                len: CHUNK_SIZE,
             },
+        );
+
+        receive! {
+            match FileReply {
+                FileReply::Read { len, data} => {
+                    buffer.extend_from_slice(&data[..len]);
+                    offset += len as u64;
+
+                    if len < CHUNK_SIZE {
+                        break;
+                    }
+                }
+            }
+            else {
+                return Err(ReadStringError::UnexpectedReply);
+            }
         }
     }
+
+    String::from_utf8(buffer).map_err(|_| ReadStringError::InvalidUtf8)
 }
