@@ -13,6 +13,7 @@ use crate::{
 mod actor;
 mod async_actor;
 pub mod global;
+mod io;
 pub mod library;
 mod metadata;
 mod migration;

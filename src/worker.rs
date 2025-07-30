@@ -152,6 +152,8 @@ impl Worker {
                 let links = actor.links();
                 let port_links = actor.ports();
 
+                // TODO: Set the inner actor to Uninitialized; so we *know* we drop the future in context.
+
                 system.registry.remove(pid);
 
                 for port in port_links.iter().copied() {

@@ -11,6 +11,7 @@ use std::{
 use crate::{
     Exit,
     global::{self, send_port},
+    io::FilledBuffer,
     port::{Port, PortContext},
     receive,
 };
@@ -65,10 +66,10 @@ impl Port for FilePort {
 
                         match file.read(&mut data[..len]) {
                             Ok(n) => {
-                                let _ = ctx.send(FileReply::Read {
-                                    len: n,
-                                    data: data.into_boxed_slice(),
-                                });
+                                let _ = ctx.send(FileReply::Read(FilledBuffer::new(
+                                    data.into_boxed_slice(),
+                                    n,
+                                )));
                             }
                             Err(err) => {
                                 ctx.exit(Exit::Io(err.to_string(), err.kind()));
@@ -123,7 +124,7 @@ pub enum FileRequest {
 
 pub enum FileReply {
     Write(usize),
-    Read { len: usize, data: Box<[u8]> },
+    Read(FilledBuffer),
 }
 
 pub enum ReadStringError {
@@ -148,11 +149,11 @@ pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, ReadStringE
 
         receive! {
             match FileReply {
-                FileReply::Read { len, data} => {
-                    buffer.extend_from_slice(&data[..len]);
-                    offset += len as u64;
+                FileReply::Read(read_buffer) => {
+                    buffer.extend_from_slice(&read_buffer);
+                    offset += read_buffer.len() as u64;
 
-                    if len < CHUNK_SIZE {
+                    if read_buffer.len() == 0 {
                         break;
                     }
                 }
