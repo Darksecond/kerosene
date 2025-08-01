@@ -204,18 +204,17 @@ pub(crate) async fn logger_actor() -> Exit {
     register("logger", pid());
 
     loop {
-        let message = receive! {
+        receive! {
             match LogMessage {
-                m => m,
+                LogMessage::Log(log) => {
+                    let message = parse(log.message, &log.values);
+                    println!("[{}] {}", log.level, message);
+                }
+            }
+            else {
+                // Ignore unexpected messages
             }
         };
-
-        match message {
-            LogMessage::Log(log) => {
-                let message = parse(log.message, &log.values);
-                println!("[{}] {}", log.level, message);
-            }
-        }
     }
 }
 

@@ -16,7 +16,7 @@ use crate::{
     receive,
 };
 
-const CHUNK_SIZE: usize = 4096;
+const CHUNK_SIZE: usize = 0x1000;
 
 pub struct FilePort {
     path: Option<PathBuf>,
@@ -128,7 +128,6 @@ pub enum FileReply {
 }
 
 pub enum ReadStringError {
-    UnexpectedReply,
     InvalidUtf8,
 }
 
@@ -158,9 +157,7 @@ pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, ReadStringE
                     }
                 }
             }
-            else {
-                return Err(ReadStringError::UnexpectedReply);
-            }
+            // TODO: Optional Timeout
         }
     }
 

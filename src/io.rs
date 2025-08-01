@@ -1,8 +1,8 @@
 use std::ops::Deref;
 
 pub struct FilledBuffer {
-    pub(crate) len: usize,
-    pub(crate) buffer: Box<[u8]>,
+    len: usize,
+    buffer: Box<[u8]>,
 }
 
 impl FilledBuffer {
