@@ -1,10 +1,25 @@
 use std::time::Duration;
 
-use kerosene::{Exit, global::stop, library::blocking::block_on, main};
+use kerosene::{
+    Exit,
+    global::{pid, spawn, stop},
+    library::blocking::block_on,
+    main,
+};
 
 main!(main_actor);
 
 async fn main_actor() -> Exit {
+    spawn(async move || {
+        println!("I'm actor {:?}", pid());
+        block_on(move || {
+            panic!("I'm panicking!");
+        })
+        .await;
+
+        Exit::Normal
+    });
+
     block_on(move || {
         std::thread::sleep(Duration::from_secs(1));
         println!("Hello, world!");

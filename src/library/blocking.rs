@@ -1,4 +1,9 @@
-use std::{collections::VecDeque, sync::mpsc::channel};
+use std::{
+    any::Any,
+    collections::VecDeque,
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::mpsc::channel,
+};
 
 use crate::{
     Exit, IntoAsyncActor, Pid,
@@ -19,10 +24,13 @@ where
     let pid = pid();
 
     let closure = move |ctx: &Context| {
-        // TODO: Use catch_unwind to handle panics
-        let result = f();
+        // TODO: Capture backtrace
+        let result = match catch_unwind(AssertUnwindSafe(|| f())) {
+            Ok(res) => JobResult::Success(res),
+            Err(err) => JobResult::Panic(panic_to_string(err)),
+        };
 
-        ctx.send(pid, JobResult::Success(result));
+        ctx.send(pid, result);
     };
 
     send(
@@ -116,5 +124,15 @@ fn handler(router: Pid) -> impl IntoAsyncActor {
                 }
             }
         }
+    }
+}
+
+fn panic_to_string(err: Box<dyn Any + Send>) -> String {
+    if let Some(str) = err.downcast_ref::<String>() {
+        str.to_string()
+    } else if let Some(err) = err.downcast_ref::<&'static str>() {
+        err.to_string()
+    } else {
+        "Unknown panic".to_string()
     }
 }
