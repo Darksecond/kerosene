@@ -12,7 +12,6 @@ use std::{
 use crate::{
     actor::{HydratedActor, HydratedActorBase, Pid},
     async_actor::IntoAsyncActor,
-    port::PortInboxTable,
 };
 
 use table::Table;
@@ -20,7 +19,6 @@ use table::Table;
 pub struct Registry {
     next_pid: AtomicU64,
     actors: Table,
-    pub ports: PortInboxTable,
     names: RwLock<HashMap<&'static str, Pid>>,
 }
 
@@ -29,7 +27,6 @@ impl Registry {
         Self {
             next_pid: AtomicU64::new(0),
             actors: Table::new(),
-            ports: PortInboxTable::new(),
             names: RwLock::new(HashMap::new()),
         }
     }
@@ -62,7 +59,6 @@ impl Registry {
 
     pub fn remove_all(&self) {
         self.actors.clear();
-        self.ports.clear();
     }
 
     pub fn add<A>(&self, actor: HydratedActor<A>)

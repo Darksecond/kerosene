@@ -13,9 +13,8 @@ use std::{
 pub use run_queue::RunQueue;
 
 use crate::{
-    actor::{Exit, Pid, Signal},
+    actor::{Pid, Signal},
     migration::Migration,
-    port::{PortPid, PortTable},
     system::System,
 };
 
@@ -35,7 +34,6 @@ impl ActiveWorker {
 pub struct Worker {
     pub spawn_at: WorkerId,
     pub run_queue: RunQueue<Pid>,
-    pub port_run_queue: RunQueue<PortPid>,
     pub running: AtomicBool,
     pub reductions: AtomicU64,
     pub max_queue_length: AtomicUsize,
@@ -51,7 +49,6 @@ impl Worker {
         Self {
             spawn_at,
             run_queue: RunQueue::new(),
-            port_run_queue: RunQueue::new(),
             running: AtomicBool::new(true),
             reductions: AtomicU64::new(2000 * 1000),
             max_queue_length: AtomicUsize::new(0),
@@ -70,8 +67,6 @@ impl Worker {
     }
 
     pub fn run(&self, system: Arc<System>) {
-        let ports = UnsafeCell::new(PortTable::new(self.spawn_at));
-
         while self.running.load(Ordering::Relaxed) {
             self.max_queue_length
                 .fetch_max(self.run_queue.len(), Ordering::Relaxed);
@@ -94,28 +89,18 @@ impl Worker {
                 }
             }
 
-            if let Some(port) = self.port_run_queue.try_pop() {
-                self.run_ports(unsafe { &mut *ports.get() }, port);
-            } else if let Some(pid) = self.run_queue.try_pop() {
-                self.run_actor(ports.get(), pid, &system);
+            if let Some(pid) = self.run_queue.try_pop() {
+                self.run_actor(pid, &system);
             } else if let Some(pid) = system.scheduler.try_steal(self.spawn_at) {
                 eprintln!("Worker {} stealing pid {}", self.spawn_at, pid.0);
-                self.run_actor(ports.get(), pid, &system);
+                self.run_actor(pid, &system);
             } else {
                 std::thread::park();
             }
         }
     }
 
-    fn run_ports(&self, ports: &mut PortTable, port_pid: PortPid) {
-        if let Some(port) = ports.get_mut(port_pid) {
-            if let Some(exit) = port.poll() {
-                ports.close(port_pid, exit);
-            }
-        }
-    }
-
-    fn run_actor(&self, ports: *mut PortTable, pid: Pid, system: &Arc<System>) {
+    fn run_actor(&self, pid: Pid, system: &Arc<System>) {
         let actor = match system.registry.lookup_pid(pid) {
             Some(actor) => actor,
             None => return,
@@ -130,7 +115,6 @@ impl Worker {
             budget: 0,
             actor: &actor,
             system: &system,
-            ports,
             _marker: PhantomData,
         });
 
@@ -150,15 +134,10 @@ impl Worker {
             Some(exit) => {
                 eprintln!("Actor {} exited with reason {:?}", pid.0, exit);
                 let links = actor.links();
-                let port_links = actor.ports();
 
                 // TODO: Set the inner actor to Uninitialized; so we *know* we drop the future in context.
 
                 system.registry.remove(pid);
-
-                for port in port_links.iter().copied() {
-                    unsafe { &mut *ports }.close(port, Exit::Normal);
-                }
 
                 for linked in links.iter().copied() {
                     if let Some(child) = system.registry.lookup_pid(linked) {

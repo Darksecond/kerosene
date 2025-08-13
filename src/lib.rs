@@ -17,7 +17,6 @@ mod io;
 pub mod library;
 mod metadata;
 mod migration;
-mod port;
 mod registry;
 mod scheduler;
 mod system;
@@ -25,9 +24,8 @@ mod timer;
 mod utils;
 mod worker;
 
-pub use actor::{Exit, Pid, TrapExitMessage, TrapPortExitMessage};
+pub use actor::{Exit, Pid, TrapExitMessage};
 pub use async_actor::IntoAsyncActor;
-pub use port::{Port, PortPid, PortRef};
 
 fn main_actor<A>(actor: A) -> impl IntoAsyncActor
 where

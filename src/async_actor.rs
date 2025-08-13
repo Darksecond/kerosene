@@ -1,6 +1,5 @@
 use crate::{
-    actor::{Exit, Pid, TrapExitMessage, TrapPortExitMessage},
-    port::PortPid,
+    actor::{Exit, Pid, TrapExitMessage},
     receive,
 };
 
@@ -35,15 +34,6 @@ pub trait SimpleActor: Send + 'static + Sized {
         let _ = from;
         async { Some(reason) }
     }
-
-    fn on_port_exit(
-        &mut self,
-        from: PortPid,
-        reason: Exit,
-    ) -> impl Future<Output = Option<Exit>> + Send {
-        let _ = from;
-        async { Some(reason) }
-    }
 }
 
 pub fn into_actor<A>(mut actor: A) -> impl IntoAsyncActor
@@ -60,14 +50,6 @@ where
                 match TrapExitMessage {
                     TrapExitMessage { pid, reason } => {
                         if let Some(exit) = actor.on_exit(pid, reason).await {
-                            return exit;
-                        }
-                    }
-                }
-
-                match TrapPortExitMessage {
-                    TrapPortExitMessage { port, reason } => {
-                        if let Some(exit) = actor.on_port_exit(port, reason).await {
                             return exit;
                         }
                     }

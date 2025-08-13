@@ -21,7 +21,6 @@ use crate::{
     },
     async_actor::IntoAsyncActor,
     metadata::{MetaKeyValue, MetaValue},
-    port::{Port, PortPid, PortRef, PortTable},
     system::System,
     utils::UnsortedSet,
 };
@@ -35,7 +34,6 @@ pub(crate) struct GlobalContext<'a> {
     pub(crate) budget: usize,
     pub(crate) actor: &'a Pin<Arc<dyn HydratedActorBase>>,
     pub(crate) system: &'a Arc<System>,
-    pub(crate) ports: *mut PortTable,
 
     pub(crate) _marker: PhantomData<*const ()>,
 }
@@ -44,11 +42,6 @@ impl<'a> GlobalContext<'a> {
     #[inline]
     pub fn pid(&self) -> Pid {
         self.actor.control_block().pid
-    }
-
-    #[inline]
-    pub fn ports(&mut self) -> &mut PortTable {
-        unsafe { &mut *self.ports }
     }
 }
 
@@ -244,49 +237,6 @@ where
     context.system.scheduler.schedule(new_pid);
 
     new_pid
-}
-
-pub fn create_port<P>(port: P) -> PortRef<P>
-where
-    P: Port,
-{
-    let pid = pid();
-    let port = context_mut().ports().create(
-        context().system.scheduler.clone(),
-        context().system.registry.clone(),
-        pid,
-        port,
-    );
-
-    // TODO: Introduce port signals
-    context_mut()
-        .ports()
-        .get_mut(port.port_pid())
-        .unwrap()
-        .start();
-
-    context().actor.ports().insert(port.port_pid());
-
-    port
-}
-
-pub fn close_port(port: impl Into<PortPid>) {
-    let port = port.into();
-    context_mut().ports().close(port, Exit::Normal);
-    context().actor.ports().remove(&port);
-}
-
-pub fn send_port<P>(port: PortRef<P>, message: P::Message)
-where
-    P: Port,
-{
-    let context = context();
-
-    context
-        .system
-        .registry
-        .ports
-        .send(&context.system.scheduler, port, message);
 }
 
 /// Yield the current actor if the budget is spent.

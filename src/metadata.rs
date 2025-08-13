@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{Pid, PortPid, utils::Timestamp};
+use crate::{Pid, utils::Timestamp};
 
 /// Various types that are supported as metadata.
 #[derive(Clone, Debug, PartialEq)]
@@ -12,7 +12,6 @@ pub enum MetaValue {
     Signed(i64),
 
     Pid(Pid),
-    Port(PortPid),
 
     Timestamp(Timestamp),
 }
@@ -25,7 +24,6 @@ impl Display for MetaValue {
             MetaValue::Unsigned(num) => write!(f, "{}", num),
             MetaValue::Signed(num) => write!(f, "{}", num),
             MetaValue::Pid(pid) => write!(f, "{}", pid.0),
-            MetaValue::Port(port_pid) => write!(f, "{:?}", port_pid),
             MetaValue::Timestamp(timestamp) => write!(f, "{}", timestamp),
         }
     }

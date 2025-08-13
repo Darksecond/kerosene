@@ -6,7 +6,6 @@ use std::sync::{
 use crate::{
     actor::Pid,
     metadata::MetaKeyValue,
-    port::PortPid,
     utils::{CachePadded, UnsortedSet},
     worker::WorkerId,
 };
@@ -21,7 +20,6 @@ pub struct ActorControlBlock {
     pub is_running: CachePadded<AtomicBool>,
     pub worker_id: AtomicU64,
     pub(crate) links: Mutex<UnsortedSet<Pid, MAX_LINKS>>,
-    pub(crate) ports: Mutex<UnsortedSet<PortPid, MAX_LINKS>>,
     pub(crate) metadata: Mutex<UnsortedSet<MetaKeyValue, MAX_META_KV>>,
 }
 
@@ -34,7 +32,6 @@ impl ActorControlBlock {
             is_running: CachePadded::new(AtomicBool::new(false)),
             worker_id: AtomicU64::new(worker_id as _),
             links: Mutex::new(UnsortedSet::new()),
-            ports: Mutex::new(UnsortedSet::new()),
             metadata: Mutex::new(UnsortedSet::new()),
         }
     }

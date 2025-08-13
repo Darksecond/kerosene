@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    actor::waker::ActorWaker, async_actor::IntoAsyncActor, metadata::MetaKeyValue, port::PortPid,
+    actor::waker::ActorWaker, async_actor::IntoAsyncActor, metadata::MetaKeyValue,
     scheduler::Scheduler, utils::UnsortedSet,
 };
 
@@ -32,17 +32,11 @@ pub trait HydratedActorBase: Send + Sync + 'static {
 
     fn queue(&self) -> MutexGuard<MessageQueue>;
     fn links(&self) -> MutexGuard<UnsortedSet<Pid, MAX_LINKS>>;
-    fn ports(&self) -> MutexGuard<UnsortedSet<PortPid, MAX_LINKS>>;
     fn metadata(&self) -> MutexGuard<UnsortedSet<MetaKeyValue, MAX_META_KV>>;
 }
 
 pub struct TrapExitMessage {
     pub pid: Pid,
-    pub reason: Exit,
-}
-
-pub struct TrapPortExitMessage {
-    pub port: PortPid,
     pub reason: Exit,
 }
 
@@ -57,13 +51,6 @@ where
     fn links(&self) -> MutexGuard<UnsortedSet<Pid, MAX_LINKS>> {
         self.control_block
             .links
-            .lock()
-            .expect("Failed to acquire lock")
-    }
-
-    fn ports(&self) -> MutexGuard<UnsortedSet<PortPid, MAX_LINKS>> {
-        self.control_block
-            .ports
             .lock()
             .expect("Failed to acquire lock")
     }
@@ -97,18 +84,6 @@ where
                             .push(Box::new(TrapExitMessage { pid, reason }));
                     } else if pid == self.control_block.pid || reason != Exit::Normal {
                         // TODO: Investigate the if condition
-                        return Some(reason);
-                    }
-                }
-                Signal::PortExit(pid, reason) => {
-                    self.ports().remove(&pid);
-
-                    if self.control_block.trap_exit.load(Ordering::Relaxed) {
-                        self.messages
-                            .lock()
-                            .unwrap()
-                            .push(Box::new(TrapPortExitMessage { port: pid, reason }));
-                    } else if reason != Exit::Normal {
                         return Some(reason);
                     }
                 }
@@ -173,7 +148,6 @@ pub enum Exit {
 
 pub enum Signal {
     Exit(Pid, Exit),
-    PortExit(PortPid, Exit),
     Kill,
     Link(Pid),
     Unlink(Pid),
