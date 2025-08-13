@@ -8,6 +8,9 @@ use crate::{
 
 const NAME: &str = "blocking_pool";
 
+/// Run a blocking closure.
+///
+/// This will run on a dedicated thread pool.
 pub async fn block_on<F, R>(f: F) -> R
 where
     F: FnOnce() -> R + Send + 'static,
