@@ -72,17 +72,6 @@ impl Migration {
         self.packed.store(packed as u64, Ordering::Release);
     }
 
-    pub fn load(&self) -> Parameters {
-        let packed = self.packed.load(Ordering::Acquire);
-        let (target, mode, balance) = unpack(packed);
-
-        Parameters {
-            target,
-            mode,
-            balance,
-        }
-    }
-
     pub fn load_for_push(&self) -> Parameters {
         loop {
             let packed = self.packed.load(Ordering::Acquire);

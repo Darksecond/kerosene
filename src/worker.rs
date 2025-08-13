@@ -25,12 +25,6 @@ pub struct ActiveWorker {
     pub thread: Thread,
 }
 
-impl ActiveWorker {
-    pub fn new(worker: Arc<Worker>, thread: Thread) -> Self {
-        Self { worker, thread }
-    }
-}
-
 pub struct Worker {
     pub spawn_at: WorkerId,
     pub run_queue: RunQueue<Pid>,
@@ -38,10 +32,6 @@ pub struct Worker {
     pub reductions: AtomicU64,
     pub max_queue_length: AtomicUsize,
     pub migration: Migration,
-}
-
-pub struct WorkerSnapshot {
-    pub run_queue_length: usize,
 }
 
 impl Worker {
@@ -53,12 +43,6 @@ impl Worker {
             reductions: AtomicU64::new(2000 * 1000),
             max_queue_length: AtomicUsize::new(0),
             migration: Migration::new(),
-        }
-    }
-
-    pub fn snapshot(&self) -> WorkerSnapshot {
-        WorkerSnapshot {
-            run_queue_length: self.run_queue.len(),
         }
     }
 
