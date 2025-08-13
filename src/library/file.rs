@@ -2,46 +2,27 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
-    sync::{
-        Arc,
-        mpsc::{Sender, channel},
-    },
+    sync::mpsc::channel,
+    thread,
 };
 
 use crate::{
-    Exit,
-    global::{self, send_port},
+    Exit, IntoAsyncActor,
+    actor::Signal,
+    global::{Context, pid, send, send_signal, spawn_linked},
     io::FilledBuffer,
-    port::{Port, PortContext},
     receive,
 };
 
-const CHUNK_SIZE: usize = 0x1000;
+fn file_actor(path: impl Into<PathBuf>) -> impl IntoAsyncActor {
+    let owner = pid();
+    let path = path.into();
 
-pub struct FilePort {
-    path: Option<PathBuf>,
-    tx: Option<Sender<FileRequest>>,
-}
-
-impl FilePort {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        FilePort {
-            path: Some(path.into()),
-            tx: None,
-        }
-    }
-}
-
-impl Port for FilePort {
-    type Message = FileRequest;
-
-    fn start(&mut self, ctx: &Arc<PortContext>) {
-        let ctx = ctx.clone();
+    async move || {
+        let ctx = Context::new();
         let (tx, rx) = channel();
-        self.tx = Some(tx);
 
-        let path = self.path.take().expect("Path not set");
-        std::thread::spawn(move || {
+        thread::spawn(move || {
             let mut file = match File::open(path) {
                 Ok(file) => file,
                 Err(err) => {
@@ -66,10 +47,10 @@ impl Port for FilePort {
 
                         match file.read(&mut data[..len]) {
                             Ok(n) => {
-                                let _ = ctx.send(FileReply::Read(FilledBuffer::new(
-                                    data.into_boxed_slice(),
-                                    n,
-                                )));
+                                let _ = ctx.send(
+                                    owner,
+                                    FileReply::Read(FilledBuffer::new(data.into_boxed_slice(), n)),
+                                );
                             }
                             Err(err) => {
                                 ctx.exit(Exit::Io(err.to_string(), err.kind()));
@@ -97,18 +78,20 @@ impl Port for FilePort {
                 }
             }
         });
-    }
 
-    fn stop(&mut self, _ctx: &Arc<PortContext>) {
-        drop(self.tx.take());
-    }
-
-    fn receive(&mut self, _ctx: &Arc<PortContext>, message: Self::Message) {
-        if let Some(tx) = &self.tx {
-            let _ = tx.send(message);
+        loop {
+            receive! {
+                match FileRequest {
+                    request => {
+                        tx.send(request).expect("Failed to send request to helper thread");
+                    },
+                }
+            }
         }
     }
 }
+
+const CHUNK_SIZE: usize = 0x1000;
 
 pub enum FileRequest {
     Read {
@@ -132,13 +115,13 @@ pub enum ReadStringError {
 }
 
 pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, ReadStringError> {
-    let port = global::create_port(FilePort::new(path));
+    let port = spawn_linked(file_actor(path));
 
     let mut offset = 0;
     let mut buffer = Vec::new();
 
     loop {
-        send_port(
+        send(
             port,
             FileRequest::Read {
                 offset: offset,
@@ -160,6 +143,9 @@ pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, ReadStringE
             // TODO: Optional Timeout
         }
     }
+
+    // TODO: Close port better.
+    send_signal(port, Signal::Exit(port, Exit::Normal));
 
     String::from_utf8(buffer).map_err(|_| ReadStringError::InvalidUtf8)
 }
