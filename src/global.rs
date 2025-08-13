@@ -1,7 +1,10 @@
 //! Actor context
 //!
 //! This module provides functions that can be used within an actor.
+mod context;
 mod receive;
+
+pub use context::*;
 
 use std::{
     any::Any,
@@ -75,6 +78,22 @@ pub fn pid() -> Pid {
     context().pid()
 }
 
+/// Sends an exit signal to the chosen actor.
+///
+/// If the actor is the current actor, it will yield immediately.
+/// Otherwise, it will add one to the budget.
+///
+pub async fn exit(to: impl ToPid, reason: Exit) {
+    let to = to.to_reference(&context().system.registry);
+    send_signal(to, Signal::Exit(to, reason));
+
+    if to == pid() {
+        yield_immediate().await
+    } else {
+        yield_now(1).await;
+    }
+}
+
 /// Stops the system
 pub fn stop() {
     context().system.stop_all();
@@ -133,12 +152,13 @@ pub fn sleep(duration: Duration) -> impl Future<Output = ()> {
 /// Sends a signal to an actor.
 ///
 /// If the actor is not found, the signal is dropped.
-pub fn send_signal(to: Pid, message: Signal) {
+pub fn send_signal(to: impl ToPid, message: Signal) {
     let context = context();
+    let pid = to.to_reference(&context.system.registry);
 
-    if let Some(actor) = context.system.registry.lookup_pid(to) {
+    if let Some(actor) = context.system.registry.lookup_pid(pid) {
         actor.send_signal(message);
-        context.system.scheduler.schedule(to);
+        context.system.scheduler.schedule(pid);
     }
 }
 
@@ -160,15 +180,8 @@ pub fn send<M>(to: impl ToPid, message: M)
 where
     M: Send + 'static,
 {
-    let context = context();
     let message = Signal::Message(Box::new(message));
-
-    let pid = to.to_reference(&context.system.registry);
-
-    if let Some(actor) = context.system.registry.lookup_pid(pid) {
-        actor.send_signal(message);
-        context.system.scheduler.schedule(pid);
-    }
+    send_signal(to, message);
 }
 
 /// Spawns a new actor.
@@ -310,6 +323,11 @@ pub fn yield_now(budget: usize) -> impl Future<Output = ()> {
     context_mut().budget += budget;
 
     YieldNow
+}
+
+// TODO: Implement this better.
+pub async fn yield_immediate() {
+    yield_now(16).await;
 }
 
 /// Insert or update metadata for the current actor.

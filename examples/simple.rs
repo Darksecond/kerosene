@@ -3,7 +3,7 @@ use std::time::Duration;
 use kerosene::{
     Exit,
     global::{send, sleep, spawn, spawn_linked, stop},
-    library::file::read_string,
+    library::betterfile::read_string,
     main, receive,
 };
 

@@ -95,7 +95,8 @@ where
                             .lock()
                             .unwrap()
                             .push(Box::new(TrapExitMessage { pid, reason }));
-                    } else if reason != Exit::Normal {
+                    } else if pid == self.control_block.pid || reason != Exit::Normal {
+                        // TODO: Investigate the if condition
                         return Some(reason);
                     }
                 }

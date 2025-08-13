@@ -21,7 +21,7 @@ async fn main_actor() -> Exit {
 
     global::spawn(stop_actor);
 
-    let contents = library::file::read_string("Cargo.toml")
+    let contents = library::betterfile::read_string("Cargo.toml")
         .await
         .ok()
         .unwrap_or(String::new());
