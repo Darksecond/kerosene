@@ -13,6 +13,7 @@ use crate::{
 mod actor;
 mod async_actor;
 pub mod global;
+// TODO: Move to library and move file into it.
 mod io;
 pub mod library;
 mod metadata;
@@ -36,6 +37,7 @@ where
         let supervisor = Supervisor::spawn_linked(Strategy::OneForOne);
 
         supervisor.supervise(RestartPolicy::Permanent, || logger_actor);
+        supervisor.supervise(RestartPolicy::Permanent, || library::blocking::router);
 
         global::schedule(global::pid(), (), Duration::from_millis(10));
 

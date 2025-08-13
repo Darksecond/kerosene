@@ -93,6 +93,7 @@ fn file_actor(path: impl Into<PathBuf>) -> impl IntoAsyncActor {
 
 const CHUNK_SIZE: usize = 0x1000;
 
+// TODO: Split up in ReadRequest and WriteRequest now that we use actors instead of ports.
 pub enum FileRequest {
     Read {
         offset: u64,
