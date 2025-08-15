@@ -1,20 +1,25 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
-use crate::{actor::Pid, scheduler::Scheduler};
+use crate::{actor::Pid, system::System};
 
 pub struct ActorWaker {
-    scheduler: Arc<Scheduler>,
+    system: Weak<System>,
     pid: Pid,
 }
 
 impl ActorWaker {
-    pub fn new(scheduler: Arc<Scheduler>, pid: Pid) -> Self {
-        ActorWaker { scheduler, pid }
+    pub fn new(system: &Arc<System>, pid: Pid) -> Self {
+        ActorWaker {
+            system: Arc::downgrade(system),
+            pid,
+        }
     }
 }
 
 impl std::task::Wake for ActorWaker {
     fn wake(self: Arc<Self>) {
-        self.scheduler.schedule(self.pid);
+        if let Some(system) = Weak::upgrade(&self.system) {
+            system.schedule(self.pid);
+        }
     }
 }

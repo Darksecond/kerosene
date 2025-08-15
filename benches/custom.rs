@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use kerosene::{
     Exit,
-    global::{spawn, stop},
+    global::{spawn, sync::stop},
     run,
 };
 
@@ -14,7 +14,8 @@ fn main() {
                 println!("Hello, world!");
                 stop();
                 Exit::Normal
-            });
+            })
+            .await;
             benchmark::measure(now.elapsed());
 
             Exit::Normal

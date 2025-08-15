@@ -7,7 +7,10 @@ use std::{
 
 use crate::{
     Exit, IntoAsyncActor, Pid,
-    global::{Context, exit, pid, register, send, spawn_linked},
+    global::{
+        exit, send, spawn_linked,
+        sync::{self, pid, register},
+    },
     receive,
 };
 
@@ -23,14 +26,14 @@ where
 {
     let pid = pid();
 
-    let closure = move |ctx: &Context| {
+    let closure = move || {
         // TODO: Capture backtrace
         let result = match catch_unwind(AssertUnwindSafe(|| f())) {
             Ok(res) => JobResult::Success(res),
             Err(err) => JobResult::Panic(panic_to_string(err)),
         };
 
-        ctx.send(pid, result);
+        sync::send(pid, result);
     };
 
     send(
@@ -38,7 +41,8 @@ where
         Job {
             closure: Box::new(closure),
         },
-    );
+    )
+    .await;
 
     receive! {
         match JobResult<R> {
@@ -58,7 +62,7 @@ enum JobResult<R> {
 }
 
 struct Job {
-    closure: Box<dyn FnOnce(&Context) + Send + 'static>,
+    closure: Box<dyn FnOnce() + Send + 'static>,
 }
 
 struct Idle(Pid);
@@ -87,7 +91,7 @@ pub(crate) async fn router() -> Exit {
                 match Job {
                     job => {
                         let pid = idle.pop_front().expect("Idle queue should not be empty");
-                        send(pid, job);
+                        send(pid, job).await;
                     }
                 }
                 match Idle {
@@ -102,16 +106,16 @@ pub(crate) async fn router() -> Exit {
 
 fn handler(router: Pid) -> impl IntoAsyncActor {
     async move || {
-        let context = Context::new();
+        let pid = pid();
         let (tx, rx) = channel::<Job>();
 
-        std::thread::spawn(move || {
+        crate::thread::spawn(move || {
             for job in rx {
                 // TODO: Handle panics
-                (job.closure)(&context);
+                (job.closure)();
 
                 // Mark ourselves as idle
-                context.send(router, Idle(context.pid()));
+                sync::send(router, Idle(pid));
             }
         });
 

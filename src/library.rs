@@ -4,6 +4,6 @@
 //! You can think of them as a standard library of sorts.
 
 pub mod blocking;
-pub mod file;
+pub mod io;
 pub mod logger;
 pub mod supervisor;

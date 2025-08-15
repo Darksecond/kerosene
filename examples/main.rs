@@ -13,25 +13,29 @@ main!(main_actor);
 
 async fn main_actor() -> Exit {
     println!("MainActor::started");
-    println!("MainActor has pid {:?} {:?}", global::pid(), global::pid());
+    println!(
+        "MainActor has pid {:?} {:?}",
+        global::sync::pid(),
+        global::sync::pid()
+    );
 
-    let child = global::spawn(my_actor);
-    let _ = global::send(child, String::from("Hello!"));
-    global::schedule(global::pid(), (), Duration::from_secs(1));
+    let child = global::spawn(my_actor).await;
+    global::send(child, String::from("Hello!")).await;
+    global::schedule(global::sync::pid(), (), Duration::from_secs(1)).await;
 
-    global::spawn(stop_actor);
+    global::spawn(stop_actor).await;
 
-    let contents = library::file::read_string("Cargo.toml")
+    let contents = library::io::file::read_string("Cargo.toml")
         .await
         .ok()
         .unwrap_or(String::new());
 
-    global::send(child, contents);
+    global::send(child, contents).await;
 
-    global::spawn(sender);
+    global::spawn(sender).await;
 
     for _ in 0..128 {
-        global::spawn(idle_loop_actor);
+        global::spawn(idle_loop_actor).await;
     }
 
     loop {
@@ -40,8 +44,8 @@ async fn main_actor() -> Exit {
                 _ => {
                     println!("MainActor::handle");
 
-                    let _ = global::send(child, String::from("Timer!"));
-                    global::schedule(global::pid(), (), Duration::from_secs(1));
+                    global::send(child, String::from("Timer!")).await;
+                    global::schedule(global::sync::pid(), (), Duration::from_secs(1)).await;
                 }
             }
         }
@@ -61,7 +65,7 @@ async fn my_actor() -> Exit {
 }
 
 async fn blocking_actor() -> Exit {
-    println!("BlockingActor::started at {}", global::pid().0);
+    println!("BlockingActor::started at {}", global::sync::pid().0);
     global::sleep(Duration::from_secs(10)).await;
     println!("BlockingActor::started completed");
 
@@ -69,12 +73,12 @@ async fn blocking_actor() -> Exit {
 }
 
 async fn idle_loop_actor() -> Exit {
-    let _ = global::send(global::pid(), ());
+    global::send(global::sync::pid(), ()).await;
     loop {
         receive! {
             match () {
                 _ => {
-                    let _ = global::send(global::pid(), ());
+                    global::send(global::sync::pid(), ()).await;
                 }
             }
         }
@@ -104,7 +108,7 @@ async fn sender() -> Exit {
     let receiver = global::spawn_linked(receiver);
 
     for i in 0..2048 {
-        global::send(receiver, format!("Message {}", i));
+        global::send(receiver, format!("Message {}", i)).await;
     }
 
     Exit::Normal
@@ -114,7 +118,7 @@ async fn stop_actor() -> Exit {
     let supervisor = Supervisor::spawn_linked(Strategy::OneForOne);
     supervisor.supervise(RestartPolicy::Permanent, || blocking_actor);
 
-    global::schedule(global::pid(), (), Duration::from_secs(30));
+    global::schedule(global::sync::pid(), (), Duration::from_secs(30)).await;
 
     receive! {
         match () {

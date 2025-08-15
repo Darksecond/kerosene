@@ -13,7 +13,7 @@ use std::{
 
 use crate::{
     actor::waker::ActorWaker, async_actor::IntoAsyncActor, metadata::MetaKeyValue,
-    scheduler::Scheduler, utils::UnsortedSet,
+    utils::UnsortedSet,
 };
 
 pub use control_block::{ActorControlBlock, MAX_LINKS, MAX_META_KV};
@@ -200,17 +200,14 @@ impl<A> HydratedActor<A>
 where
     A: IntoAsyncActor,
 {
-    pub(crate) fn new(
-        scheduler: &Arc<Scheduler>,
-        control_block: ActorControlBlock,
-        actor: A,
-    ) -> Self {
+    pub(crate) fn new(control_block: ActorControlBlock, actor: A) -> Self {
         let pid = control_block.pid;
+        let system = unsafe { crate::thread::borrow() };
 
         Self {
             control_block,
             inbox: Inbox::new(),
-            waker: Arc::new(ActorWaker::new(scheduler.clone(), pid)),
+            waker: Arc::new(ActorWaker::new(&system, pid)),
             actor: Mutex::new(ActorState::Waiting(actor)),
             messages: Mutex::new(MessageQueue::new()),
         }

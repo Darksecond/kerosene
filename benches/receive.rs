@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use benchmark::{measure, scale};
 use kerosene::{
     Exit, IntoAsyncActor, Pid,
-    global::{send, sleep, spawn, stop},
+    global::{send, sleep, spawn, sync::stop},
     receive,
 };
 
@@ -27,7 +27,7 @@ fn sender_actor(receiver: Pid) -> impl IntoAsyncActor {
     async move || {
         for i in 0..100000 {
             let message = i;
-            send(receiver, message);
+            send(receiver, message).await;
         }
 
         Exit::Normal
@@ -35,8 +35,8 @@ fn sender_actor(receiver: Pid) -> impl IntoAsyncActor {
 }
 
 async fn main_actor() -> Exit {
-    let receive = spawn(receive_actor);
-    spawn(sender_actor(receive));
+    let receive = spawn(receive_actor).await;
+    spawn(sender_actor(receive)).await;
 
     // Just idle.
     sleep(Duration::from_secs(100)).await;

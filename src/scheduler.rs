@@ -1,12 +1,14 @@
-use std::sync::{
-    Arc, RwLock,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+use std::{
+    pin::Pin,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 
 use crate::{
-    actor::Pid,
+    actor::HydratedActorBase,
     migration::{Mode, Parameters},
-    registry::Registry,
     worker::{ActiveWorker, Worker, WorkerId},
 };
 
@@ -19,20 +21,22 @@ pub(crate) enum Slot {
 pub struct Scheduler {
     count: AtomicUsize,
     pub(crate) workers: [RwLock<Slot>; 128],
-    registry: Arc<Registry>,
     pub(crate) stopped: AtomicBool,
     is_balancing: AtomicBool,
 }
 
 impl Scheduler {
-    pub fn new(registry: Arc<Registry>) -> Self {
+    pub fn new() -> Self {
         Self {
             count: AtomicUsize::new(0),
             workers: std::array::from_fn(|_| RwLock::new(Slot::Empty)),
-            registry,
             stopped: AtomicBool::new(false),
             is_balancing: AtomicBool::new(false),
         }
+    }
+
+    pub fn count(&self) -> usize {
+        self.count.load(Ordering::Relaxed)
     }
 
     pub fn allocate_slot(&self) -> WorkerId {
@@ -101,12 +105,9 @@ impl Scheduler {
         self.count.fetch_sub(1, Ordering::Release);
     }
 
-    pub fn schedule(&self, pid: Pid) {
-        let Some(actor) = self.registry.lookup_pid(pid) else {
-            return;
-        };
-
+    pub fn schedule_actor(&self, actor: Pin<Arc<dyn HydratedActorBase>>) {
         let control_block = actor.control_block();
+        let pid = control_block.pid;
 
         let worker_id = control_block.worker_id.load(Ordering::Acquire) as usize;
 
@@ -124,44 +125,6 @@ impl Scheduler {
         }
     }
 
-    // Try and steal from a worker, starting to the next working in the ring
-    // and overflowing back around.
-    pub fn try_steal(&self, worker_id: WorkerId) -> Option<Pid> {
-        let n = self.count.load(Ordering::Relaxed);
-        let mut i = (worker_id + 1) % n;
-
-        while i != worker_id {
-            let Some(worker) = self.get_worker(i) else {
-                i = (i + 1) % n;
-                continue;
-            };
-
-            if let Some(pid) = worker.run_queue.try_pop() {
-                // Reassign actor to it's new worker.
-                let Some(actor) = self.registry.lookup_pid(pid) else {
-                    // actor must have been removed from the registry
-                    return None;
-                };
-
-                let control_block = actor.control_block();
-                if !control_block.is_running.load(Ordering::Acquire) {
-                    control_block
-                        .worker_id
-                        .store(worker_id as _, Ordering::Release);
-
-                    return Some(pid);
-                } else {
-                    eprintln!("Trying to steal running actor {}", pid.0);
-                    worker.run_queue.push(pid);
-                }
-            }
-
-            i = (i + 1) % n;
-        }
-
-        None
-    }
-
     pub fn try_balance(&self, worker: WorkerId) -> bool {
         if self
             .is_balancing
@@ -175,86 +138,6 @@ impl Scheduler {
             true
         } else {
             false
-        }
-    }
-
-    pub fn try_pull(&self, target: WorkerId, parameters: Parameters) {
-        let Some(target) = self.get_worker(target) else {
-            return;
-        };
-
-        let Some(source) = self.get_worker(parameters.target) else {
-            return;
-        };
-
-        let can_pull = source.run_queue_length() > parameters.balance
-            && target.run_queue_length() < parameters.balance;
-
-        if can_pull {
-            let Some(pid) = source.run_queue.try_pop() else {
-                return;
-            };
-
-            let Some(actor) = self.registry.lookup_pid(pid) else {
-                return;
-            };
-
-            // println!(
-            //     "Worker {} should pull {} from {}",
-            //     target.spawn_at, pid.0, source.spawn_at
-            // );
-
-            if !actor.control_block().is_running.load(Ordering::Acquire) {
-                actor
-                    .control_block()
-                    .worker_id
-                    .store(target.spawn_at as _, Ordering::Release);
-
-                target.run_queue.push(pid);
-            } else {
-                // We tried to push an actor that is currently running
-                source.run_queue.push(pid);
-            }
-        }
-    }
-
-    pub fn try_push(&self, source: WorkerId, parameters: Parameters) {
-        let Some(source) = self.get_worker(source) else {
-            return;
-        };
-
-        let Some(target) = self.get_worker(parameters.target) else {
-            return;
-        };
-
-        let can_push = source.run_queue_length() > parameters.balance
-            && target.run_queue_length() < parameters.balance;
-
-        if can_push {
-            let Some(pid) = source.run_queue.try_pop() else {
-                return;
-            };
-
-            let Some(actor) = self.registry.lookup_pid(pid) else {
-                return;
-            };
-
-            // println!(
-            //     "Worker {} should push {} to {}",
-            //     source.spawn_at, pid.0, target.spawn_at
-            // );
-
-            if !actor.control_block().is_running.load(Ordering::Acquire) {
-                actor
-                    .control_block()
-                    .worker_id
-                    .store(target.spawn_at as _, Ordering::Release);
-
-                target.run_queue.push(pid);
-            } else {
-                // We tried to push an actor that is currently running
-                source.run_queue.push(pid);
-            }
         }
     }
 

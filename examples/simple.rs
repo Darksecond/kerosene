@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use kerosene::{
     Exit,
-    global::{send, sleep, spawn, spawn_linked, stop},
-    library::file::read_string,
+    global::{send, sleep, spawn, spawn_linked, sync::stop},
+    library::io::file::read_string,
     main, receive,
 };
 
@@ -14,10 +14,11 @@ async fn main_actor() -> Exit {
         let _ = read_string("Cargo.toml").await;
 
         Exit::Normal
-    });
+    })
+    .await;
 
     sleep(Duration::from_secs(1)).await;
-    spawn(sender);
+    spawn(sender).await;
 
     Exit::Normal
 }
@@ -47,7 +48,7 @@ async fn sender() -> Exit {
     let receiver = spawn_linked(receiver);
 
     for i in 0..128 {
-        send(receiver, format!("Message {}", i));
+        send(receiver, format!("Message {}", i)).await;
     }
 
     Exit::Normal

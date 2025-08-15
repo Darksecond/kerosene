@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use kerosene::{
     Exit,
-    global::{insert_metadata, sleep, spawn, stop},
+    global::{insert_metadata, sleep, spawn, sync::stop},
     library::logger::debug,
     main,
 };
@@ -19,7 +19,8 @@ async fn main_actor() -> Exit {
     spawn(async move || {
         debug("{actor_key} at [{file}:{line}]").emit();
         Exit::Normal
-    });
+    })
+    .await;
 
     sleep(Duration::from_millis(100)).await;
     stop();

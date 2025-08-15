@@ -1,16 +1,13 @@
 use std::{
     collections::BinaryHeap,
     sync::{
-        Arc, Condvar, Mutex,
+        Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use crate::{
-    actor::{Pid, Signal},
-    system::System,
-};
+use crate::actor::{Pid, Signal};
 
 pub struct Timer {
     is_running: AtomicBool,
@@ -85,7 +82,9 @@ impl Timer {
         self.cond.notify_one(); // Wake timer thread if sleeping
     }
 
-    pub fn run(&self, system: Arc<System>) {
+    pub fn run(&self) {
+        let system = unsafe { crate::thread::borrow() };
+
         let mut entries = self.entries.lock().expect("Failed to acquire lock");
         while self.is_running.load(Ordering::Relaxed) {
             while let Some(entry) = entries.peek() {
@@ -93,10 +92,10 @@ impl Timer {
 
                 if entry.expire_at <= now {
                     let entry = entries.pop().unwrap();
-                    system.scheduler.schedule(entry.pid);
+                    system.schedule(entry.pid);
                     if let Some(actor) = system.registry.lookup_pid(entry.pid) {
                         let _ = actor.send_signal(entry.message);
-                        system.scheduler.schedule(entry.pid);
+                        system.schedule(entry.pid);
                     }
 
                     continue;

@@ -1,10 +1,8 @@
 //! Actor context
 //!
 //! This module provides functions that can be used within an actor.
-mod context;
 mod receive;
-
-pub use context::*;
+pub mod sync;
 
 use std::{
     any::Any,
@@ -16,13 +14,9 @@ use std::{
 };
 
 use crate::{
-    actor::{
-        ActorControlBlock, Exit, HydratedActor, HydratedActorBase, MAX_META_KV, Pid, Signal, ToPid,
-    },
+    actor::{ActorControlBlock, Exit, HydratedActor, HydratedActorBase, Pid, Signal, ToPid},
     async_actor::IntoAsyncActor,
     metadata::{MetaKeyValue, MetaValue},
-    system::System,
-    utils::UnsortedSet,
 };
 
 thread_local! {
@@ -33,7 +27,6 @@ thread_local! {
 pub(crate) struct GlobalContext<'a> {
     pub(crate) budget: usize,
     pub(crate) actor: &'a Pin<Arc<dyn HydratedActorBase>>,
-    pub(crate) system: &'a Arc<System>,
 
     pub(crate) _marker: PhantomData<*const ()>,
 }
@@ -66,35 +59,25 @@ pub(crate) fn reset_context() {
     CONTEXT.with(|ctx| ctx.set(std::ptr::null_mut()));
 }
 
-/// Returns the current actors' PID
-pub fn pid() -> Pid {
-    context().pid()
+pub(crate) fn has_context() -> bool {
+    !CONTEXT.get().is_null()
 }
 
 /// Sends an exit signal to the chosen actor.
 ///
 /// If the actor is the current actor, it will yield immediately.
 /// Otherwise, it will add one to the budget.
-///
 pub async fn exit(to: impl ToPid, reason: Exit) {
-    let to = to.to_reference(&context().system.registry);
-    send_signal(to, Signal::Exit(to, reason));
+    let system = unsafe { crate::thread::borrow() };
+    let to = to.to_reference(&system.registry);
 
-    if to == pid() {
+    sync::exit(to, reason);
+
+    if to == sync::pid() {
         yield_immediate().await
     } else {
         yield_now(1).await;
     }
-}
-
-/// Stops the system
-pub fn stop() {
-    context().system.stop_all();
-}
-
-/// Register a name for an actor
-pub fn register(name: &'static str, actor: Pid) {
-    context().system.registry.register(name, actor);
 }
 
 /// Traps the exit signal
@@ -136,7 +119,8 @@ pub fn sleep(duration: Duration) -> impl Future<Output = ()> {
 
     // We don't use yield_now here because we're already going to sleep.
     context_mut().budget += 1;
-    context().system.timer.wake_up(pid(), duration);
+    let system = unsafe { crate::thread::borrow() };
+    system.timer.wake_up(sync::pid(), duration);
     let now = Instant::now();
 
     Sleep(now, duration)
@@ -145,67 +129,47 @@ pub fn sleep(duration: Duration) -> impl Future<Output = ()> {
 /// Sends a signal to an actor.
 ///
 /// If the actor is not found, the signal is dropped.
-pub fn send_signal(to: impl ToPid, message: Signal) {
-    let context = context();
-    let pid = to.to_reference(&context.system.registry);
-
-    if let Some(actor) = context.system.registry.lookup_pid(pid) {
-        actor.send_signal(message);
-        context.system.scheduler.schedule(pid);
-    }
+pub async fn send_signal(to: impl ToPid, message: Signal) {
+    yield_now(1).await;
+    sync::send_signal(to, message);
 }
 
 /// Schedule a message to be delivered to an actor after a given delay.
 ///
 /// If the actor is not found, the signal is dropped.
-pub fn schedule<T>(to: Pid, message: T, delay: Duration)
+pub async fn schedule<T>(to: Pid, message: T, delay: Duration)
 where
     T: Send + 'static,
 {
-    context().system.timer.add(to, delay, message);
+    yield_now(1).await;
+    sync::schedule(to, message, delay);
 }
 
 /// Send a message to an actor.
 ///
 /// If the actor is not found, the message is dropped.
 /// an actor can either be a `Pid` or a `NamedRef`.
-pub fn send<M>(to: impl ToPid, message: M)
+pub async fn send<M>(to: impl ToPid, message: M)
 where
     M: Send + 'static,
 {
-    let message = Signal::Message(Box::new(message));
-    send_signal(to, message);
+    yield_now(1).await;
+    sync::send(to, message);
 }
 
 /// Spawns a new actor.
 ///
 /// The spawned actor will not be linked to the current actor.
 /// The Pid of the spawned actor is returned.
-pub fn spawn<B>(behavior: B) -> Pid
+pub async fn spawn<B>(behavior: B) -> Pid
 where
     B: IntoAsyncActor,
 {
-    let context = context();
-    let pid = context.system.registry.allocate_pid();
-
-    let spawn_at = context
-        .actor
-        .control_block()
-        .worker_id
-        .load(Ordering::Acquire) as _;
-
-    let mut control_block = ActorControlBlock::new(pid, spawn_at);
-    control_block.metadata = Mutex::new(context.actor.metadata().clone());
-
-    let actor = HydratedActor::new(&context.system.scheduler, control_block, behavior);
-
-    context.system.registry.add(actor);
-
-    context.system.scheduler.schedule(pid);
-
-    pid
+    yield_now(1).await;
+    sync::spawn(behavior)
 }
 
+// TODO: Make async
 /// Spawns a new actor and links it to the current actor.
 ///
 /// The Pid of the spawned actor is returned.
@@ -213,9 +177,10 @@ pub fn spawn_linked<B>(behavior: B) -> Pid
 where
     B: IntoAsyncActor,
 {
+    let system = unsafe { crate::thread::borrow() };
     let context = context();
     let pid = context.pid();
-    let new_pid = context.system.registry.allocate_pid();
+    let new_pid = system.registry.allocate_pid();
 
     let spawn_at = context
         .actor
@@ -228,13 +193,13 @@ where
 
     let _ = control_block.add_link(pid);
 
-    let actor = HydratedActor::new(&context.system.scheduler, control_block, behavior);
+    let actor = HydratedActor::new(control_block, behavior);
 
     let _ = context.actor.control_block().add_link(new_pid);
 
-    context.system.registry.add(actor);
+    system.registry.add(actor);
 
-    context.system.scheduler.schedule(new_pid);
+    system.schedule(new_pid);
 
     new_pid
 }
@@ -259,9 +224,10 @@ pub fn yield_now(budget: usize) -> impl Future<Output = ()> {
             self: Pin<&mut Self>,
             _cx: &mut std::task::Context<'_>,
         ) -> std::task::Poll<Self::Output> {
+            let system = unsafe { crate::thread::borrow() };
             if context().budget >= MAX_BUDGET {
                 context_mut().budget = 0;
-                context().system.scheduler.schedule(pid());
+                system.schedule(sync::pid());
 
                 std::task::Poll::Pending
             } else {
@@ -288,11 +254,6 @@ pub fn insert_metadata(key: &'static str, value: impl Into<MetaValue>) {
     });
 }
 
-/// Gets all the metadata for the current actor.
-pub fn metadata() -> UnsortedSet<MetaKeyValue, MAX_META_KV> {
-    context().actor.metadata().clone()
-}
-
 // TODO: We should consider tracking where we are in the message queue and resume from there, since obviously none of the previous messages matched.
 #[doc(hidden)]
 #[must_use]
@@ -306,7 +267,8 @@ where
     let now = Instant::now();
 
     if let Some(timeout) = timeout {
-        context().system.timer.wake_up(pid(), timeout);
+        let system = unsafe { crate::thread::borrow() };
+        system.timer.wake_up(sync::pid(), timeout);
     }
 
     yield_now(0).await;

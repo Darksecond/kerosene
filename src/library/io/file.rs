@@ -3,14 +3,15 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
     sync::mpsc::channel,
-    thread,
 };
 
 use crate::{
     Exit, IntoAsyncActor,
-    actor::Signal,
-    global::{Context, pid, send, send_signal, spawn_linked},
-    io::FilledBuffer,
+    global::{
+        exit, send, spawn_linked,
+        sync::{self, pid},
+    },
+    library::io::Buffer,
     receive,
 };
 
@@ -19,14 +20,14 @@ fn file_actor(path: impl Into<PathBuf>) -> impl IntoAsyncActor {
     let path = path.into();
 
     async move || {
-        let ctx = Context::new();
+        let pid = pid();
         let (tx, rx) = channel();
 
-        thread::spawn(move || {
+        crate::thread::spawn(move || {
             let mut file = match File::open(path) {
                 Ok(file) => file,
                 Err(err) => {
-                    ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                    sync::exit(pid, Exit::Io(err.to_string(), err.kind()));
                     return;
                 }
             };
@@ -34,26 +35,24 @@ fn file_actor(path: impl Into<PathBuf>) -> impl IntoAsyncActor {
             for msg in rx {
                 match msg {
                     FileRequest::Read { offset, len } => {
-                        let len = len.max(CHUNK_SIZE);
-                        let mut data = vec![0; CHUNK_SIZE];
+                        let mut buffer = Buffer::new();
+                        buffer.resize(len);
 
                         match file.seek(SeekFrom::Start(offset)) {
                             Ok(_) => {}
                             Err(err) => {
-                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                sync::exit(pid, Exit::Io(err.to_string(), err.kind()));
                                 return;
                             }
                         }
 
-                        match file.read(&mut data[..len]) {
+                        match file.read(&mut buffer) {
                             Ok(n) => {
-                                let _ = ctx.send(
-                                    owner,
-                                    FileReply::Read(FilledBuffer::new(data.into_boxed_slice(), n)),
-                                );
+                                buffer.resize(n);
+                                let _ = send(owner, FileReply::Read(buffer));
                             }
                             Err(err) => {
-                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                sync::exit(pid, Exit::Io(err.to_string(), err.kind()));
                                 return;
                             }
                         }
@@ -62,7 +61,7 @@ fn file_actor(path: impl Into<PathBuf>) -> impl IntoAsyncActor {
                         match file.seek(SeekFrom::Start(offset)) {
                             Ok(_) => {}
                             Err(err) => {
-                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                sync::exit(pid, Exit::Io(err.to_string(), err.kind()));
                                 return;
                             }
                         }
@@ -70,7 +69,7 @@ fn file_actor(path: impl Into<PathBuf>) -> impl IntoAsyncActor {
                         match file.write_all(&data[..len]) {
                             Ok(_) => {}
                             Err(err) => {
-                                ctx.exit(Exit::Io(err.to_string(), err.kind()));
+                                sync::exit(pid, Exit::Io(err.to_string(), err.kind()));
                                 return;
                             }
                         }
@@ -108,7 +107,7 @@ pub enum FileRequest {
 
 pub enum FileReply {
     Write(usize),
-    Read(FilledBuffer),
+    Read(Buffer),
 }
 
 pub enum ReadStringError {
@@ -128,7 +127,8 @@ pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, ReadStringE
                 offset: offset,
                 len: CHUNK_SIZE,
             },
-        );
+        )
+        .await;
 
         receive! {
             match FileReply {
@@ -145,8 +145,7 @@ pub async fn read_string(path: impl Into<PathBuf>) -> Result<String, ReadStringE
         }
     }
 
-    // TODO: Close port better.
-    send_signal(port, Signal::Exit(port, Exit::Normal));
+    exit(port, Exit::Normal).await;
 
     String::from_utf8(buffer).map_err(|_| ReadStringError::InvalidUtf8)
 }

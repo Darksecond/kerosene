@@ -18,7 +18,7 @@ use std::{fmt::Display, panic::Location};
 
 use crate::{
     Exit,
-    global::{metadata, pid, register, send},
+    global::sync::{self, metadata, pid, register},
     metadata::{MetaKeyValue, MetaValue},
     receive,
     utils::{Timestamp, UnsortedSet},
@@ -64,6 +64,8 @@ struct Record {
 }
 
 /// Allows building a log message with metadata.
+///
+/// This is safe to use from any unmanaged thread.
 #[must_use]
 pub struct LogBuilder {
     logger: &'static str,
@@ -145,7 +147,8 @@ impl LogBuilder {
             values,
         };
 
-        send(self.logger, LogMessage::Log(log));
+        // TODO: Consider using awaitable version
+        sync::send(self.logger, LogMessage::Log(log));
     }
 }
 
@@ -198,8 +201,6 @@ pub fn emergency(message: &'static str) -> LogBuilder {
 }
 
 /// The Logger actor.
-///
-/// This should be registered as 'betterlogger'.
 pub(crate) async fn logger_actor() -> Exit {
     register("logger", pid());
 

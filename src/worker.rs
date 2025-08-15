@@ -15,7 +15,6 @@ pub use run_queue::RunQueue;
 use crate::{
     actor::{Pid, Signal},
     migration::Migration,
-    system::System,
 };
 
 pub type WorkerId = usize;
@@ -50,7 +49,9 @@ impl Worker {
         self.run_queue.len()
     }
 
-    pub fn run(&self, system: Arc<System>) {
+    pub fn run(&self) {
+        let system = unsafe { crate::thread::borrow() };
+
         while self.running.load(Ordering::Relaxed) {
             self.max_queue_length
                 .fetch_max(self.run_queue.len(), Ordering::Relaxed);
@@ -67,24 +68,26 @@ impl Worker {
             {
                 let parameters = self.migration.load_for_push();
                 if parameters.mode == crate::migration::Mode::Push {
-                    system.scheduler.try_push(self.spawn_at, parameters);
+                    system.try_push(self.spawn_at, parameters);
                 } else if parameters.mode == crate::migration::Mode::Pull {
-                    system.scheduler.try_pull(self.spawn_at, parameters);
+                    system.try_pull(self.spawn_at, parameters);
                 }
             }
 
             if let Some(pid) = self.run_queue.try_pop() {
-                self.run_actor(pid, &system);
-            } else if let Some(pid) = system.scheduler.try_steal(self.spawn_at) {
+                self.run_actor(pid);
+            } else if let Some(pid) = system.try_steal(self.spawn_at) {
                 eprintln!("Worker {} stealing pid {}", self.spawn_at, pid.0);
-                self.run_actor(pid, &system);
+                self.run_actor(pid);
             } else {
                 std::thread::park();
             }
         }
     }
 
-    fn run_actor(&self, pid: Pid, system: &Arc<System>) {
+    fn run_actor(&self, pid: Pid) {
+        let system = unsafe { crate::thread::borrow() };
+
         let actor = match system.registry.lookup_pid(pid) {
             Some(actor) => actor,
             None => return,
@@ -98,7 +101,6 @@ impl Worker {
         let global_context = UnsafeCell::new(crate::global::GlobalContext {
             budget: 0,
             actor: &actor,
-            system: &system,
             _marker: PhantomData,
         });
 
@@ -127,7 +129,7 @@ impl Worker {
                     if let Some(child) = system.registry.lookup_pid(linked) {
                         child.send_signal(Signal::Exit(pid, exit.clone()));
 
-                        system.scheduler.schedule(linked);
+                        system.schedule(linked);
                     }
                 }
             }

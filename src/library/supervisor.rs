@@ -117,7 +117,7 @@ impl SimpleActor for SupervisorActor {
         let is_child = self.children.iter().any(|c| c.pid == from);
         if !is_child && reason != Exit::Normal {
             return Some(reason);
-        } else if from == global::pid() {
+        } else if from == global::sync::pid() {
             return Some(reason);
         }
 
@@ -147,7 +147,7 @@ impl SimpleActor for SupervisorActor {
                                 child.state = ChildState::Stopping;
                             }
 
-                            global::send_signal(child.pid, Signal::Kill);
+                            global::send_signal(child.pid, Signal::Kill).await;
                         }
                     }
 
@@ -215,7 +215,7 @@ impl Supervisor {
             actor
         });
 
-        crate::global::send(self.actor, Request::Supervise(factory, policy));
+        crate::global::sync::send(self.actor, Request::Supervise(factory, policy));
     }
 
     pub fn supervise_named<F, B>(&self, name: &'static str, policy: RestartPolicy, factory: F)
@@ -229,10 +229,10 @@ impl Supervisor {
             // Do spawn
             let actor = factory();
             let actor = global::spawn_linked(actor);
-            global::register(name, actor);
+            global::sync::register(name, actor);
             actor
         });
 
-        crate::global::send(self.actor, Request::Supervise(factory, policy));
+        crate::global::sync::send(self.actor, Request::Supervise(factory, policy));
     }
 }

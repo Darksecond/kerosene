@@ -13,14 +13,13 @@ use crate::{
 mod actor;
 mod async_actor;
 pub mod global;
-// TODO: Move to library and move file into it.
-mod io;
 pub mod library;
 mod metadata;
 mod migration;
 mod registry;
 mod scheduler;
 mod system;
+pub mod thread;
 mod timer;
 mod utils;
 mod worker;
@@ -39,7 +38,7 @@ where
         supervisor.supervise(RestartPolicy::Permanent, || logger_actor);
         supervisor.supervise(RestartPolicy::Permanent, || library::blocking::router);
 
-        global::schedule(global::pid(), (), Duration::from_millis(10));
+        global::schedule(global::sync::pid(), (), Duration::from_millis(10)).await;
 
         loop {
             receive! {
@@ -65,9 +64,8 @@ fn start_worker(system: Arc<System>) -> JoinHandle<()> {
     let handle = {
         let worker = worker.clone();
 
-        let system = system.clone();
-        std::thread::spawn(move || {
-            worker.run(system.clone());
+        crate::thread::spawn(move || {
+            worker.run();
         })
     };
 
@@ -87,6 +85,7 @@ where
     A: IntoAsyncActor,
 {
     let system = System::new();
+    crate::thread::give(system.clone());
 
     let handles = {
         let cores = std::thread::available_parallelism()
@@ -103,17 +102,17 @@ where
 
         let control_block = ActorControlBlock::new(pid, 0);
 
-        let actor = HydratedActor::new(&system.scheduler, control_block, main_actor(entry_point));
+        let actor = HydratedActor::new(control_block, main_actor(entry_point));
 
         system.registry.add(actor);
 
-        system.scheduler.schedule(pid);
+        system.schedule(pid);
     }
 
     let timer_handle = {
-        let timer = system.timer.clone();
-        std::thread::spawn(move || {
-            timer.run(system.clone());
+        crate::thread::spawn(move || {
+            let system = unsafe { crate::thread::borrow() };
+            system.timer.run();
         })
     };
 
@@ -121,6 +120,8 @@ where
         handle.join().unwrap();
     }
     timer_handle.join().unwrap();
+
+    drop(unsafe { crate::thread::get() });
 }
 
 #[macro_export]
