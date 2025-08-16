@@ -11,7 +11,7 @@ use crate::{
         exit, send, spawn_linked,
         sync::{self, pid},
     },
-    library::io::Buffer,
+    library::io::buffer_pool::Buffer,
     receive,
 };
 
@@ -49,7 +49,7 @@ fn file_actor(path: impl Into<PathBuf>) -> impl IntoAsyncActor {
                         match file.read(&mut buffer) {
                             Ok(n) => {
                                 buffer.resize(n);
-                                let _ = send(owner, FileReply::Read(buffer));
+                                sync::send(owner, FileReply::Read(buffer));
                             }
                             Err(err) => {
                                 sync::exit(pid, Exit::Io(err.to_string(), err.kind()));

@@ -146,6 +146,12 @@ pub enum Exit {
     Io(String, io::ErrorKind),
 }
 
+impl From<io::Error> for Exit {
+    fn from(err: io::Error) -> Self {
+        Exit::Io(err.to_string(), err.kind())
+    }
+}
+
 pub enum Signal {
     Exit(Pid, Exit),
     Kill,
