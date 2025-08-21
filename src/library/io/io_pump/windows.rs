@@ -12,8 +12,8 @@ use windows_sys::Win32::{
         CloseHandle, ERROR_IO_PENDING, FALSE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, TRUE,
     },
     Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_OVERLAPPED, FILE_GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING,
-        ReadFile,
+        CreateFileW, FILE_FLAG_OVERLAPPED, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ,
+        OPEN_EXISTING, ReadFile, WriteFile,
     },
     System::{
         IO::{CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED},
@@ -31,6 +31,7 @@ use crate::{
         buffer_pool::Buffer,
         io_pump::{
             CloseRequest, ErrorResponse, OpenRequest, OpenResponse, ReadRequest, ReadResponse,
+            WriteRequest, WriteResponse,
         },
     },
     receive,
@@ -72,7 +73,7 @@ impl CompletionPort {
         let handle = unsafe {
             CreateFileW(
                 path.as_ptr(),
-                FILE_GENERIC_READ,
+                FILE_GENERIC_READ | FILE_GENERIC_WRITE,
                 FILE_SHARE_READ,
                 null(),
                 OPEN_EXISTING,
@@ -94,7 +95,7 @@ impl CompletionPort {
         Ok(OpenDescriptor(handle))
     }
 
-    fn pump(&self) -> ActiveOperation {
+    fn pump(&self) -> Box<ActiveOperation> {
         let mut bytes_transferred = 0;
         let mut completion_key = 0;
         let mut overlapped = null_mut();
@@ -115,11 +116,16 @@ impl CompletionPort {
 
         let mut operation = unsafe { Box::from_raw(overlapped as *mut ActiveOperation) };
 
+        operation.start = operation.start.wrapping_add(bytes_transferred as _);
+        operation.length -= bytes_transferred as usize;
+
         unsafe {
-            operation.buffer.set_len(bytes_transferred as _);
+            operation
+                .buffer
+                .set_len(operation.buffer.len() + bytes_transferred as usize);
         }
 
-        *operation
+        operation
     }
 }
 
@@ -139,14 +145,44 @@ pub enum Operation {
 
 fn read(mut request: ReadRequest) -> Result<(), Error> {
     request.buffer.resize(0);
-    let ptr = request.buffer.as_mut_ptr();
+
     let operation = Box::new(ActiveOperation::from(request));
 
     let success = unsafe {
         ReadFile(
             operation.descriptor.0,
-            ptr,
-            operation.buffer.capacity() as _,
+            operation.start,
+            operation.length as _,
+            null_mut(),
+            Box::into_raw(operation).cast(),
+        )
+    };
+
+    let error = unsafe { GetLastError() };
+    if success == FALSE && error != ERROR_IO_PENDING {
+        return Err(get_error());
+    }
+
+    if success == TRUE {
+        return Err(Error::other("Don't know what to do now!"));
+    }
+
+    Ok(())
+}
+
+fn write(request: WriteRequest) -> Result<(), Error> {
+    let mut operation = Box::new(ActiveOperation::from(request));
+    operation.buffer.resize(0);
+
+    resume_write(operation)
+}
+
+fn resume_write(operation: Box<ActiveOperation>) -> Result<(), Error> {
+    let success = unsafe {
+        WriteFile(
+            operation.descriptor.0,
+            operation.start,
+            operation.length as _,
             null_mut(),
             Box::into_raw(operation).cast(),
         )
@@ -170,23 +206,45 @@ pub struct ActiveOperation {
     overlapped: OVERLAPPED,
 
     buffer: Buffer,
+    start: *mut u8,
+    length: usize,
     pid: Pid,
     descriptor: Descriptor,
     operation: Operation,
 }
 
 impl From<ReadRequest> for ActiveOperation {
-    fn from(value: ReadRequest) -> Self {
+    fn from(mut value: ReadRequest) -> Self {
         let mut overlapped: OVERLAPPED = Default::default();
         overlapped.Anonymous.Anonymous.Offset = value.offset as u32;
         overlapped.Anonymous.Anonymous.OffsetHigh = (value.offset >> 32) as u32;
 
         Self {
             overlapped,
+            start: value.buffer.as_mut_ptr(),
+            length: value.buffer.capacity(),
             buffer: value.buffer,
             pid: value.pid,
             descriptor: value.descriptor,
             operation: Operation::Read,
+        }
+    }
+}
+
+impl From<WriteRequest> for ActiveOperation {
+    fn from(mut value: WriteRequest) -> Self {
+        let mut overlapped: OVERLAPPED = Default::default();
+        overlapped.Anonymous.Anonymous.Offset = value.offset as u32;
+        overlapped.Anonymous.Anonymous.OffsetHigh = (value.offset >> 32) as u32;
+
+        Self {
+            overlapped,
+            start: value.buffer.as_mut_ptr(),
+            length: value.buffer.len(),
+            buffer: value.buffer,
+            pid: value.pid,
+            descriptor: value.descriptor,
+            operation: Operation::Write,
         }
     }
 }
@@ -232,7 +290,18 @@ pub async fn pump_actor() -> Exit {
                             },
                         );
                     }
-                    Operation::Write => todo!(),
+                    Operation::Write => {
+                        if operation.length == 0 {
+                            crate::global::sync::send(
+                                operation.pid,
+                                WriteResponse {
+                                    buffer: operation.buffer,
+                                },
+                            );
+                        } else {
+                            resume_write(operation).unwrap();
+                        }
+                    }
                     Operation::Accept => todo!(),
                 }
             }
@@ -264,6 +333,11 @@ pub async fn pump_actor() -> Exit {
             match ReadRequest {
                 req => {
                     handle_errors(req.pid, async || read(req)).await;
+                }
+            }
+            match WriteRequest {
+                req => {
+                    handle_errors(req.pid, async || write(req)).await
                 }
             }
         }

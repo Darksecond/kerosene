@@ -109,8 +109,28 @@ pub async fn read(descriptor: Descriptor, offset: u64, buffer: Buffer) -> Buffer
 }
 
 pub async fn write(descriptor: Descriptor, offset: u64, buffer: Buffer) -> Buffer {
-    let _ = (descriptor, offset, buffer);
-    todo!()
+    send(
+        "io_pump",
+        WriteRequest {
+            pid: pid(),
+            descriptor,
+            buffer,
+            offset,
+        },
+    )
+    .await;
+
+    receive! {
+        match WriteResponse {
+            WriteResponse { buffer } => buffer,
+        }
+        match ErrorResponse {
+            ErrorResponse { error } => {
+                exit(pid(), error.into()).await;
+                unreachable!()
+            }
+        }
+    }
 }
 
 // TODO: This might need to be slightly redesigned because apparently `AcceptEx` uses a buffer to capture local and remote addresses?
